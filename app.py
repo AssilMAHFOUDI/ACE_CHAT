@@ -14,29 +14,87 @@ if "messages" not in st.session_state:
 
 # Barre latérale pour effacer l'historique
 with st.sidebar:
+    st.header("⚙️ Paramètres")
+
+    # 1. Le choix du mode
+    mode = st.radio(
+        "Choisis le mode de discussion :",
+        ["💬 Chat Classique", "📄 Analyse de Document"],
+    )
+
+    st.divider()  # Une petite ligne de séparation esthétique
+
+    # 2. Si le mode Document est choisi, on affiche le bouton d'upload
+    texte_document = ""
+    if mode == "📄 Analyse de Document":
+        fichier_upload = st.file_uploader("Charge ton document", type=["txt"])
+
+        # Si un fichier est chargé, on lit son contenu
+        if fichier_upload is not None:
+            texte_document = fichier_upload.getvalue().decode("utf-8")
+            st.success("Fichier chargé avec succès !")
+
+    st.divider()
+
+    # Bouton pour effacer l'historique
     if st.button("🗑️ Recommencer la discussion"):
         st.session_state.messages = []
         st.rerun()
 
-# 4. Afficher l'historique des messages précédents à l'écran
+# --- AFFICHAGE DE L'HISTORIQUE ---
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# 5. La zone où tu tapes ton texte
+# --- GESTION DE L'ENVOI D'UN MESSAGE ---
 if prompt := st.chat_input("Pose-moi une question..."):
-    # A. On ajoute et affiche le message de l'utilisateur
+    # 1. PRÉPARATION DU MESSAGE POUR L'IA (La magie du RAG opère ici)
+    if mode == "📄 Analyse de Document":
+        # Sécurité : on vérifie que l'utilisateur a bien chargé un fichier
+        if texte_document == "":
+            with st.chat_message("assistant"):
+                st.warning(
+                    "⚠️ Merci de charger un document dans le menu de gauche avant de poser une question."
+                )
+            st.stop()  # On arrête l'exécution ici pour ne pas interroger Gemini pour rien
+
+        # On crée le "Super Prompt" secret qui contient les règles + le document + la question
+        prompt_pour_ia = f"""
+        Tu es un assistant expert en analyse de documents.
+        
+        Voici le document de référence :
+        --- DÉBUT DU DOCUMENT ---
+        {texte_document}
+        --- FIN DU DOCUMENT ---
+        
+        Consignes strictes :
+        1. Utilise le document ci-dessus pour trouver les informations factuelles.
+        2. MÉMOIRE VITAL : Sers-toi impérativement de l'historique de notre conversation pour comprendre le contexte de ma question (ex: de quelle entreprise on parle, traduction d'une réponse précédente).
+        3. Si je pose une question très courte ("quand ?", "et en anglais ?"), c'est que je fais référence à ta réponse précédente.
+        4. Si l'information factuelle n'est ni dans le document ni déductible de la conversation, réponds : "L'information n'est pas dans le document."
+        5. Reponds moi dans la langue de la question par exemple si je pause la question en anglais reponds en anglais
+        
+        Ma question actuelle : {prompt}
+        """
+    else:
+        # En mode Chat Classique, l'IA reçoit juste la question normale
+        prompt_pour_ia = prompt
+
+    # 2. TRADUCTION DE L'HISTORIQUE POUR GEMINI (Sans le -1 !)
+    gemini_history = []
+    for msg in st.session_state.messages:  # Plus besoin de couper le dernier message
+        role = "model" if msg["role"] == "assistant" else "user"
+        gemini_history.append({"role": role, "parts": [{"text": msg["content"]}]})
+
+    # On ajoute la nouvelle question formatée pour l'IA
+    gemini_history.append({"role": "user", "parts": [{"text": prompt_pour_ia}]})
+
+    # 3. AFFICHAGE ET SAUVEGARDE VISUELLE (Déplacé ici, juste avant l'appel API)
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # B. On formate l'historique pour l'API Gemini ("model" au lieu de "assistant")
-    gemini_history = []
-    for msg in st.session_state.messages:
-        role = "model" if msg["role"] == "assistant" else "user"
-        gemini_history.append({"role": role, "parts": [{"text": msg["content"]}]})
-
-    # C. On interroge Gemini en lui envoyant toute la conversation
+    # 4. ENVOI À L'API ET AFFICHAGE DE LA RÉPONSE
     with st.chat_message("assistant"):
         try:
             reponse = client.models.generate_content(
@@ -45,7 +103,6 @@ if prompt := st.chat_input("Pose-moi une question..."):
             texte_reponse = reponse.text
             st.markdown(texte_reponse)
 
-            # D. On sauvegarde la réponse de l'assistant dans la mémoire
             st.session_state.messages.append(
                 {"role": "assistant", "content": texte_reponse}
             )
