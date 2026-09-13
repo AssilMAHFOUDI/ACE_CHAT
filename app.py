@@ -1,3 +1,4 @@
+import pypdf
 import streamlit as st
 from google import genai
 
@@ -27,11 +28,24 @@ with st.sidebar:
     # 2. Si le mode Document est choisi, on affiche le bouton d'upload
     texte_document = ""
     if mode == "📄 Analyse de Document":
-        fichier_upload = st.file_uploader("Charge ton document", type=["txt"])
-
+        # On autorise maintenant les fichiers pdf en plus de txt
+        fichier_upload = st.file_uploader("Charge ton document", type=["txt", "pdf"])
         # Si un fichier est chargé, on lit son contenu
         if fichier_upload is not None:
-            texte_document = fichier_upload.getvalue().decode("utf-8")
+            # Traitement selon le format de fichier
+            if fichier_upload.name.endswith(".txt"):
+                texte_document = fichier_upload.getvalue().decode("utf-8")
+
+            elif fichier_upload.name.endswith(".pdf"):
+                pdf_reader = pypdf.PdfReader(fichier_upload)
+                # Extrait le texte de chaque page et assemble le tout
+                texte_document = "\n".join(
+                    [
+                        page.extract_text()
+                        for page in pdf_reader.pages
+                        if page.extract_text()
+                    ]
+                )
             st.success("Fichier chargé avec succès !")
 
     st.divider()
