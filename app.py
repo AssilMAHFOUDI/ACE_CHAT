@@ -1,6 +1,24 @@
 import pypdf
+import uuid
 import streamlit as st
 from google import genai
+from supabase import create_client
+
+
+# --- CONFIGURATION SUPABASE ---
+@st.cache_resource
+def init_connection():
+    url = st.secrets["supabase"]["url"]
+    key = st.secrets["supabase"]["key"]
+    return create_client(url, key)
+
+
+supabase = init_connection()
+
+# --- GESTION DE LA SESSION ---
+# On génère un identifiant unique (UUID) pour le visiteur s'il n'en a pas encore
+if "session_id" not in st.session_state:
+    st.session_state.session_id = str(uuid.uuid4())
 
 # 1. L'en-tête de la page
 st.title("🤖 ACE CHAT ")
@@ -9,9 +27,24 @@ st.title("🤖 ACE CHAT ")
 cle_api = st.secrets["GEMINI_API_KEY"]
 client = genai.Client(api_key=cle_api)
 
-# 3. Initialisation de la mémoire (session_state)
+# 3. Initialisation de la mémoire (session_state + Supabase)
 if "messages" not in st.session_state:
+    # On va chercher l'historique de cette session dans la base
+    reponse_db = (
+        supabase.table("chat_history")
+        .select("*")
+        .eq("session_id", st.session_state.session_id)
+        .order("created_at")
+        .execute()
+    )
+
     st.session_state.messages = []
+
+    # On réinjecte les anciens messages dans la mémoire de Streamlit
+    for row in reponse_db.data:
+        st.session_state.messages.append(
+            {"role": row["role"], "content": row["content"]}
+        )
 
 # Barre latérale pour effacer l'historique
 with st.sidebar:
@@ -52,6 +85,11 @@ with st.sidebar:
 
     # Bouton pour effacer l'historique
     if st.button("🗑️ Recommencer la discussion"):
+        # NOUVEAU : On supprime les messages de cette session dans Supabase
+        supabase.table("chat_history").delete().eq(
+            "session_id", st.session_state.session_id
+        ).execute()
+
         st.session_state.messages = []
         st.rerun()
 
@@ -105,6 +143,12 @@ if prompt := st.chat_input("Pose-moi une question..."):
 
     # 3. AFFICHAGE ET SAUVEGARDE VISUELLE (Déplacé ici, juste avant l'appel API)
     st.session_state.messages.append({"role": "user", "content": prompt})
+
+    # NOUVEAU : Sauvegarde du message utilisateur dans Supabase
+    supabase.table("chat_history").insert(
+        {"session_id": st.session_state.session_id, "role": "user", "content": prompt}
+    ).execute()
+
     with st.chat_message("user"):
         st.markdown(prompt)
 
@@ -120,6 +164,15 @@ if prompt := st.chat_input("Pose-moi une question..."):
             st.session_state.messages.append(
                 {"role": "assistant", "content": texte_reponse}
             )
+
+            # NOUVEAU : Sauvegarde de la réponse IA dans Supabase
+            supabase.table("chat_history").insert(
+                {
+                    "session_id": st.session_state.session_id,
+                    "role": "assistant",
+                    "content": texte_reponse,
+                }
+            ).execute()
 
         except Exception as e:
             st.error(f"Erreur : {e}")
