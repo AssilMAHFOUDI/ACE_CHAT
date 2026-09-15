@@ -4,6 +4,7 @@ app.py module used to laucnh ace chat tool
 
 import streamlit as st
 import uuid
+import logging
 
 # --- IMPORTATION DE NOS NOUVEAUX MODULES ---
 from modules.database import (
@@ -19,6 +20,10 @@ from modules.ai_engine import (
     generate_rag_prompt,
     get_ai_response,
 )
+
+
+# On force Python à afficher les logs INFO dans le terminal
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 
 # --- 1. INITIALISATION DES OUTILS ---
 supabase = init_connection()

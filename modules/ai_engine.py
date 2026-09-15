@@ -1,4 +1,6 @@
 from google import genai
+from google.genai import types
+from modules.tools import calculatrice, meteo
 
 
 def init_ai_client(api_key):
@@ -47,7 +49,14 @@ def get_ai_response(client, gemini_history):
     """
     Envoie l'historique complet au modèle Gemini et retourne le texte généré.
     """
+    # On déclare la liste des outils disponibles pour Gemini
+    config = types.GenerateContentConfig(
+        tools=[calculatrice, meteo]
+    )  # <--- L'outil magique de recherche en direct de Google
+
+    # Le SDK gère automatiquement l'exécution de la fonction si Gemini décide de l'appeler
+
     reponse = client.models.generate_content(
-        model="gemini-3.5-flash-lite", contents=gemini_history
+        model="gemini-3.5-flash-lite", contents=gemini_history, config=config
     )
     return reponse.text
