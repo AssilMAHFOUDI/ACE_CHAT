@@ -1,20 +1,22 @@
 # 🤖 ACE CHAT
 
-**ACE CHAT** est une application de chat intelligente construite avec **Streamlit** et propulsée par **Google Gemini**. Elle combine un assistant conversationnel, l'analyse de documents (RAG) et l'appel d'outils externes (recherche web, météo, calculatrice), avec une persistance de l'historique dans **Supabase**.
+**ACE CHAT** is an intelligent chat application built with **Streamlit** and powered by **Google Gemini**. It combines a conversational assistant, document analysis (RAG-style), and a **ReAct agent loop** that can autonomously call external tools (web search, weather, calculator), with conversation history persisted in **Supabase**.
 
 ---
 
-## ✨ Fonctionnalités
+## ✨ Features
 
-- 💬 **Chat classique** — Conversation en temps réel avec le modèle Gemini, avec mémoire du contexte.
-- 📄 **Analyse de document (RAG)** — Chargez un fichier `.txt` ou `.pdf` et posez des questions sur son contenu. L'assistant répond en s'appuyant sur le document et l'historique de la conversation.
-- 🛠️ **Outils (Function Calling)** — Gemini peut appeler automatiquement :
-  - 🔍 **Recherche web** (DuckDuckGo) pour les actualités et informations récentes.
-  - 🌦️ **Météo** (Open-Meteo) pour la météo actuelle d'une ville.
-  - 🧮 **Calculatrice** pour évaluer des expressions mathématiques.
-- 💾 **Persistance** — L'historique des conversations est sauvegardé dans Supabase et rechargé à chaque session.
-- 🗑️ **Réinitialisation** — Bouton pour effacer l'historique de la discussion en cours.
-- 🌍 **Multilingue** — L'assistant répond dans la langue de la question.
+- 💬 **Classic Chat** — Real-time conversation with the Gemini model, with context memory.
+- 📄 **Document Analysis (RAG-style)** — Upload a `.txt` or `.pdf` file and ask questions about its content. The assistant answers using the document and the conversation history.
+- 🧠 **ReAct Agent Loop** — The model autonomously decides, step by step, whether to call a tool or produce a final answer. Tool results are fed back into the model until it is ready to respond (bounded to 10 iterations).
+- 🛠️ **Tool Calling (Function Calling)** — Gemini can automatically invoke:
+  - 🔍 **Web search** (DuckDuckGo) for news, scores, and recent information.
+  - 🌦️ **Weather** (Open-Meteo) for the current weather in a city.
+  - 🧮 **Calculator** for evaluating mathematical expressions.
+- 📡 **Live Agent Status** — A Streamlit status box shows each reasoning step and tool call in real time.
+- 💾 **Persistence** — Conversation history is saved to Supabase and reloaded on each session.
+- 🗑️ **Reset** — Button to clear the current conversation history.
+- 🌍 **Multilingual** — The assistant replies in the language of the question.
 
 ---
 
@@ -22,55 +24,70 @@
 
 ```
 ACE_CHAT/
-├── app.py                        # Point d'entrée Streamlit (UI + orchestration)
-├── requirements.txt              # Dépendances Python
+├── app.py                        # Streamlit entry point (UI + orchestration)
+├── requirements.txt              # Python dependencies
 ├── README.md
 ├── .streamlit/
-│   └── secrets.toml              # Clés API et identifiants (non versionné)
+│   └── secrets.toml              # API keys and credentials (not versioned)
 ├── .devcontainer/
-│   └── devcontainer.json         # Configuration GitHub Codespaces / Dev Container
+│   └── devcontainer.json         # GitHub Codespaces / Dev Container config
 └── modules/
     ├── __init__.py
-    ├── ai_engine.py              # Client Gemini, formatage historique, prompt RAG
-    ├── database.py               # Connexion Supabase + CRUD de l'historique
-    ├── document_processor.py     # Extraction de texte (TXT / PDF)
-    └── tools.py                  # Outils exposés à Gemini (web, météo, calcul)
+    ├── ai_engine.py              # Gemini client, ReAct loop, RAG prompt
+    ├── database.py               # Supabase connection + history CRUD
+    ├── document_processor.py     # Text extraction (TXT / PDF)
+    └── tools.py                  # Tools exposed to Gemini (web, weather, calc)
 ```
 
-### Rôle des modules
+### Module responsibilities
 
-| Module | Responsabilité |
+| Module | Responsibility |
 | --- | --- |
-| `app.py` | Interface Streamlit, gestion de session, orchestration des appels. |
-| `modules/ai_engine.py` | Initialisation du client Gemini, conversion de l'historique, génération du prompt RAG et récupération des réponses. |
-| `modules/database.py` | Connexion mise en cache à Supabase, lecture / écriture / suppression des messages. |
-| `modules/document_processor.py` | Extraction du texte depuis un fichier uploadé (`.txt` ou `.pdf`). |
-| `modules/tools.py` | Fonctions `recherche_web`, `meteo` et `calculatrice` utilisables par Gemini. |
+| `app.py` | Streamlit UI, session management, orchestration of calls, live status box. |
+| `modules/ai_engine.py` | Gemini client initialization, history conversion, ReAct agent loop, tool dispatch, RAG prompt generation. |
+| `modules/database.py` | Cached Supabase connection, read / write / delete messages. |
+| `modules/document_processor.py` | Extract text from an uploaded file (`.txt` or `.pdf`). |
+| `modules/tools.py` | `recherche_web`, `meteo`, and `calculatrice` functions callable by Gemini. |
 
 ---
 
-## 🧰 Stack technique
+## 🧠 How the Agent Works
+
+`get_ai_response()` in `modules/ai_engine.py` implements a **ReAct (Reason + Act)** loop:
+
+1. The latest user message is sent to a Gemini chat session.
+2. If the model returns `function_calls`, the corresponding tools are executed and their results are sent back to the model as function responses.
+3. The loop repeats (up to `max_iterations = 10`) until the model returns a plain text answer.
+4. A `status_callback` reports each step to the Streamlit UI (`st.status`).
+
+Automatic function calling is explicitly disabled (`automatic_function_calling=disable=True`) so the application controls tool execution and error handling. A system instruction injects the current date for time-aware reasoning.
+
+> **Note:** This is a tool-using ReAct agent. It does not perform explicit planning, long-term memory, or self-critique. The "RAG" mode uses prompt stuffing (the full document is inserted into the prompt) rather than vector embeddings.
+
+---
+
+## 🧰 Tech Stack
 
 - **Python 3.11+**
-- **Streamlit** — Interface web
-- **Google GenAI SDK** (`google-genai`) — Modèle `gemini-3.5-flash-lite`
-- **Supabase** — Base de données PostgreSQL pour l'historique
-- **pypdf** — Extraction de texte des PDF
-- **ddgs** — Recherche web DuckDuckGo
-- **Open-Meteo API** — Données météo (aucune clé requise)
+- **Streamlit** — Web interface
+- **Google GenAI SDK** (`google-genai`) — Model `gemini-3.5-flash-lite`
+- **Supabase** — PostgreSQL database for history
+- **pypdf** — PDF text extraction
+- **ddgs** — DuckDuckGo web search
+- **Open-Meteo API** — Weather data (no API key required)
 
 ---
 
 ## 🚀 Installation
 
-### 1. Cloner le dépôt
+### 1. Clone the repository
 
 ```bash
 git clone https://github.com/AssilMAHFOUDI/ACE_CHAT.git
 cd ACE_CHAT
 ```
 
-### 2. Créer un environnement virtuel (recommandé)
+### 2. Create a virtual environment (recommended)
 
 ```bash
 python -m venv .venv
@@ -80,7 +97,7 @@ python -m venv .venv
 source .venv/bin/activate
 ```
 
-### 3. Installer les dépendances
+### 3. Install dependencies
 
 ```bash
 pip install -r requirements.txt
@@ -90,36 +107,36 @@ pip install -r requirements.txt
 
 ## 🔑 Configuration
 
-Créez le fichier `.streamlit/secrets.toml` à la racine du projet (ce fichier est ignoré par Git) :
+Create the `.streamlit/secrets.toml` file at the project root (this file is ignored by Git):
 
 ```toml
-GEMINI_API_KEY = "votre_cle_api_gemini"
+GEMINI_API_KEY = "your_gemini_api_key"
 
 [supabase]
-url = "https://votre-projet.supabase.co"
-key = "votre_cle_supabase"
+url = "https://your-project.supabase.co"
+key = "your_supabase_key"
 ```
 
-> ⚠️ **Ne commitez jamais ce fichier.** Il est déjà listé dans `.gitignore`.
+> ⚠️ **Never commit this file.** It is already listed in `.gitignore`.
 
-### Obtenir les clés
+### Getting the keys
 
-- **Clé Gemini** : [Google AI Studio](https://aistudio.google.com/app/apikey)
-- **Supabase** : créez un projet sur [supabase.com](https://supabase.com), puis récupérez l'URL et la clé dans *Project Settings → API*.
+- **Gemini key**: [Google AI Studio](https://aistudio.google.com/app/apikey)
+- **Supabase**: create a project on [supabase.com](https://supabase.com), then get the URL and key from *Project Settings → API*.
 
-### Préparer la base de données Supabase
+### Prepare the Supabase database
 
-Créez une table `chat_history` avec la structure suivante :
+Create a `chat_history` table with the following structure:
 
-| Colonne | Type | Notes |
+| Column | Type | Notes |
 | --- | --- | --- |
-| `id` | `int8` / `bigint` | Clé primaire, auto-incrémentée |
-| `session_id` | `text` / `uuid` | Identifiant de la session de chat |
-| `role` | `text` | `user` ou `assistant` |
-| `content` | `text` | Contenu du message |
-| `created_at` | `timestamptz` | Valeur par défaut : `now()` |
+| `id` | `int8` / `bigint` | Primary key, auto-incremented |
+| `session_id` | `text` / `uuid` | Chat session identifier |
+| `role` | `text` | `user` or `assistant` |
+| `content` | `text` | Message content |
+| `created_at` | `timestamptz` | Default: `now()` |
 
-Exemple de script SQL :
+Example SQL script:
 
 ```sql
 create table chat_history (
@@ -133,44 +150,45 @@ create table chat_history (
 
 ---
 
-## ▶️ Lancer l'application
+## ▶️ Running the App
 
 ```bash
 streamlit run app.py
 ```
 
-L'application sera accessible à l'adresse [http://localhost:8501](http://localhost:8501).
+The app will be available at [http://localhost:8501](http://localhost:8501).
 
 ### Via GitHub Codespaces / Dev Container
 
-Le projet inclut une configuration `.devcontainer`. Dans un Codespace, l'application se lance automatiquement sur le port `8501` après l'installation des dépendances.
+The project includes a `.devcontainer` configuration. In a Codespace, the app starts automatically on port `8501` after dependencies are installed.
 
 ---
 
-## 📖 Utilisation
+## 📖 Usage
 
-1. **Choisir un mode** dans la barre latérale :
-   - **💬 Chat Classique** — Discutez librement avec l'assistant.
-   - **📄 Analyse de Document** — Chargez un fichier `.txt` ou `.pdf`, puis posez vos questions sur son contenu.
-2. **Poser une question** via la barre de saisie en bas de l'écran.
-3. **Réinitialiser** la conversation avec le bouton *🗑️ Recommencer la discussion*.
+1. **Choose a mode** in the sidebar:
+   - **💬 Classic Chat** — Chat freely with the assistant.
+   - **📄 Document Analysis** — Upload a `.txt` or `.pdf` file, then ask questions about its content.
+2. **Ask a question** using the input bar at the bottom of the screen.
+3. **Watch the agent work** — the status box shows each reasoning step and tool call live.
+4. **Reset** the conversation with the *🗑️ Recommencer la discussion* button.
 
-### Exemples de questions
+### Example prompts
 
-- *« Quel est le score du dernier match du Real Madrid ? »* → déclenche la recherche web.
-- *« Quelle est la météo à Paris ? »* → déclenche l'outil météo.
-- *« Combien font (45 * 12) / 3 ? »* → déclenche la calculatrice.
-- En mode document : *« Résume ce document »*, puis *« et en anglais ? »*.
-
----
-
-## 🔒 Sécurité
-
-- Les secrets (`GEMINI_API_KEY`, identifiants Supabase) sont stockés dans `.streamlit/secrets.toml`, exclu du versionnement.
-- La fonction `calculatrice` utilise `eval` avec `__builtins__` désactivé pour limiter les risques d'exécution arbitraire.
+- *"What was the score of Real Madrid's last match?"* → triggers web search.
+- *"What's the weather in Paris?"* → triggers the weather tool.
+- *"What is (45 * 12) / 3?"* → triggers the calculator.
+- In document mode: *"Summarize this document"*, then *"and in English?"*.
 
 ---
 
-## 📄 Licence
+## 🔒 Security
 
-Ce projet est fourni à des fins d'apprentissage. Ajoutez une licence si vous souhaitez le distribuer.
+- Secrets (`GEMINI_API_KEY`, Supabase credentials) are stored in `.streamlit/secrets.toml`, excluded from version control.
+- The `calculatrice` function uses `eval` with `__builtins__` disabled to limit arbitrary code execution risks.
+
+---
+
+## 📄 License
+
+This project is provided for learning purposes. Add a license if you intend to distribute it.
