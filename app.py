@@ -104,9 +104,21 @@ if prompt := st.chat_input("Pose-moi une question..."):
     # D. Appel à l'IA et Sauvegarde de la réponse
     with st.chat_message("assistant"):
         try:
-            # On délègue la génération de texte au module ai_engine
-            texte_reponse = get_ai_response(client, gemini_history)
-            st.markdown(texte_reponse)
+            # 1. On crée la boîte de statut Streamlit
+            with st.status("L'Agent se met au travail...", expanded=True) as status_box:
+                # 2. On crée la fonction qui va écrire dans cette boîte
+                def update_ui_status(message):
+                    status_box.write(message)
+
+                # On délègue la génération de texte au module ai_engine (AVEC LE CALLBACK !)
+                texte_reponse = get_ai_response(
+                    client, gemini_history, status_callback=update_ui_status
+                )
+                # 4. Quand c'est fini, on ferme et on met à jour le titre de la boîte
+                status_box.update(
+                    label="Réponse prête !", state="complete", expanded=True
+                )
+                st.markdown(texte_reponse)
 
             st.session_state.messages.append(
                 {"role": "assistant", "content": texte_reponse}

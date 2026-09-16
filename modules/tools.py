@@ -3,7 +3,39 @@ import urllib.request
 import urllib.parse
 import json
 
+from ddgs import DDGS
+
+
 logger = logging.getLogger(__name__)
+
+
+def recherche_web(requete: str) -> str:
+    """
+    Effectue une recherche sur Internet via DuckDuckGo pour trouver des actualités, des scores sportifs ou des informations récentes.
+    Exemple de requête : 'score dernier match Real Madrid', 'actualité tech du jour'
+    """
+    logger.info(f"🛠️ [TOOL EXECUTED] Recherche web appelée pour : {requete}")
+    try:
+        # On demande les 3 premiers résultats du web
+        results = list(DDGS().text(requete, max_results=3))
+
+        if not results:
+            return f"Aucun résultat trouvé pour '{requete}'."
+
+        # On formate les résultats de manière propre pour le LLM
+        extrait_resultats = []
+        for res in results:
+            extrait_resultats.append(
+                f"- Titre : {res.get('title')}\n  Résumé : {res.get('body')}\n  Lien : {res.get('href')}"
+            )
+
+        reponse_formatee = "\n\n".join(extrait_resultats)
+        logger.info("✅ Recherche web exécutée avec succès.")
+        return reponse_formatee
+
+    except Exception as e:
+        logger.error(f"❌ Erreur lors de la recherche web pour {requete} : {e}")
+        return f"Désolé, je n'ai pas réussi à faire la recherche sur Internet pour {requete}."
 
 
 def calculatrice(expression: str) -> str:
