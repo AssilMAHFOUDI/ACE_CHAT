@@ -7,19 +7,27 @@ import uuid
 import logging
 
 # --- IMPORTATION DE NOS NOUVEAUX MODULES ---
+
 from modules.database import (
     init_connection,
     get_chat_history,
     save_message,
     clear_chat_history,
+    search_relevant_chunks,
+    clear_document_chunks,
 )
-from modules.document_processor import extract_text_from_file
+from modules.document_processor import (
+    extract_text_from_file,
+    process_and_store_document  # 💡 NOUVEAU
+)
 from modules.ai_engine import (
     init_ai_client,
     format_history_for_gemini,
     generate_rag_prompt,
     get_ai_response,
+    get_embedding,
 )
+
 
 
 # On force Python à afficher les logs INFO dans le terminal
@@ -57,35 +65,81 @@ with st.sidebar:
     texte_document = ""
     if mode == "📄 Analyse de Document":
         fichier_upload = st.file_uploader("Charge ton document", type=["txt", "pdf"])
-        # On délègue la lecture du fichier au module document_processor
-        texte_document = extract_text_from_file(fichier_upload)
-        if texte_document:
-            st.success("Fichier chargé avec succès !")
+        
+        if fichier_upload:
+            # 1. On extrait le texte (comme avant)
+            texte_document = extract_text_from_file(fichier_upload)
+            
+            # 2. On vérifie si ce fichier a DÉJÀ été traité dans cette session
+            if "fichier_traite" not in st.session_state or st.session_state.fichier_traite != fichier_upload.name:
+                
+                # On affiche un petit spinner pendant que Gemini calcule les vecteurs
+                with st.spinner("🧠 Découpage et vectorisation du document en cours..."):
+                    process_and_store_document(
+                        text=texte_document,
+                        file_name=fichier_upload.name,
+                        session_id=st.session_state.session_id,
+                        supabase_client=supabase,
+                        ai_client=client
+                    )
+                # On marque le fichier comme "traité" pour ne pas le refaire au prochain message
+                st.session_state.fichier_traite = fichier_upload.name
+                
+            st.success("✅ Fichier prêt et mémorisé dans Supabase !")
 
     st.divider()
     if st.button("🗑️ Recommencer la discussion"):
-        # On délègue la suppression au module database
+        # 1. On nettoie les chunks dans Supabase avant de changer de session
+        
+        clear_document_chunks(supabase, st.session_state.session_id)
+        
+        # 2. On efface l'historique chat en base
         clear_chat_history(supabase, st.session_state.session_id)
+        
+        # 3. On génère un tout nouveau session_id pour repartir à zéro
+        st.session_state.session_id = str(uuid.uuid4())
         st.session_state.messages = []
+        
+        # 4. On oublie le fichier traité
+        if "fichier_traite" in st.session_state:
+            del st.session_state["fichier_traite"]
+            
         st.rerun()
 
+
+    
 # --- 5. AFFICHAGE DES MESSAGES ---
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
 # --- 6. GESTION D'UN NOUVEAU MESSAGE ---
-if prompt := st.chat_input("Pose-moi une question..."):
+if prompt := st.chat_input("Pose-moi une question sur ton document..."):
+    
     # A. Préparation de la question pour l'IA
     if mode == "📄 Analyse de Document":
-        if not texte_document:
+        if "fichier_traite" not in st.session_state:
             with st.chat_message("assistant"):
-                st.warning(
-                    "⚠️ Merci de charger un document dans le menu de gauche avant de poser une question."
-                )
+                st.warning("⚠️ Merci de charger un document dans le menu de gauche avant de poser une question.")
             st.stop()
-        # On délègue la création du prompt caché au module ai_engine
-        prompt_pour_ia = generate_rag_prompt(texte_document, prompt)
+            
+        # 1. On transforme la question de l'utilisateur en vecteur
+        with st.spinner("🔍 Recherche des passages pertinents dans le document..."):
+            
+            question_vector = get_embedding(prompt, client)
+            
+            # 2. On interroge Supabase pour trouver les morceaux les plus proches
+            relevant_chunks = search_relevant_chunks(
+                supabase_client=supabase,
+                query_embedding=question_vector,
+                session_id=st.session_state.session_id
+            )
+            
+        if not relevant_chunks:
+            prompt_pour_ia = f"L'utilisateur pose cette question : {prompt}, mais aucun extrait pertinent n'a été trouvé dans le document."
+        else:
+            # 3. On génère le prompt RAG intelligent avec les extraits ciblés
+            prompt_pour_ia = generate_rag_prompt(relevant_chunks, prompt)
     else:
         prompt_pour_ia = prompt
 
@@ -95,26 +149,20 @@ if prompt := st.chat_input("Pose-moi une question..."):
 
     # C. Affichage et Sauvegarde de la question utilisateur
     st.session_state.messages.append({"role": "user", "content": prompt})
-    save_message(
-        supabase, st.session_state.session_id, "user", prompt
-    )  # Délégation Database
+    save_message(supabase, st.session_state.session_id, "user", prompt)
     with st.chat_message("user"):
         st.markdown(prompt)
 
     # D. Appel à l'IA et Sauvegarde de la réponse
     with st.chat_message("assistant"):
         try:
-            # 1. On crée la boîte de statut Streamlit
-            with st.status("L'Agent se met au travail...", expanded=True) as status_box:
-                # 2. On crée la fonction qui va écrire dans cette boîte
+            with st.status("L'Agent analyse les extraits...", expanded=True) as status_box:
                 def update_ui_status(message):
                     status_box.write(message)
 
-                # On délègue la génération de texte au module ai_engine (AVEC LE CALLBACK !)
                 texte_reponse = get_ai_response(
                     client, gemini_history, status_callback=update_ui_status
                 )
-                # 4. Quand c'est fini, on ferme et on met à jour le titre de la boîte
                 status_box.update(
                     label="Réponse prête !", state="complete", expanded=True
                 )

@@ -115,25 +115,33 @@ def get_ai_response(client, gemini_history, status_callback=None):
     return "Je suis désolé, le raisonnement était trop complexe et j'ai dû m'arrêter avant de trouver la réponse."
 
 
-def generate_rag_prompt(texte_document, question):
+def generate_rag_prompt(relevant_chunks, user_question):
     """
-    Crée le prompt formaté avec les consignes strictes et le contexte du document.
+    Crée un prompt enrichi en combinant uniquement les extraits pertinents 
+    trouvés dans la base de données et la question de l'utilisateur.
     """
+    context = "\n\n".join([chunk["content"] for chunk in relevant_chunks])
+    
     prompt = f"""
-    Tu es un assistant expert en analyse de documents.
-    
-    Voici le document de référence :
-    --- DÉBUT DU DOCUMENT ---
-    {texte_document}
-    --- FIN DU DOCUMENT ---
-    
-    Consignes strictes :
-    1. Utilise le document ci-dessus pour trouver les informations factuelles.
-    2. MÉMOIRE VITAL : Sers-toi impérativement de l'historique de notre conversation pour comprendre le contexte de ma question.
-    3. Si je pose une question très courte ("quand ?", "et en anglais ?"), c'est que je fais référence à ta réponse précédente.
-    4. Si l'information factuelle n'est ni dans le document ni déductible de la conversation, réponds : "L'information n'est pas dans le document."
-    5. Reponds moi dans la langue de la question par exemple si je pause la question en anglais reponds en anglais
-    
-    Ma question actuelle : {question}
+    Tu es un assistant IA professionnel. Tu dois répondre à la question de l'utilisateur en te basant **uniquement** sur le contexte fourni ci-dessous. 
+    Si la réponse ne se trouve pas dans le contexte, dis honnêtement que tu ne sais pas, n'invente rien.
+
+    --- CONTEXTE ---
+    {context}
+    --- FIN DU CONTEXTE ---
+
+    Question de l'utilisateur : {user_question}
     """
     return prompt
+
+def get_embedding(text, client):
+    """
+    Transforme un texte en vecteur (embedding) de 768 dimensions 
+    en utilisant le modèle d'embedding de Gemini.
+    """
+    response = client.models.embed_content(
+        model='gemini-embedding-2',
+        contents=text
+    )
+    # On retourne la liste des 768 nombres
+    return response.embeddings[0].values

@@ -42,3 +42,37 @@ def clear_chat_history(supabase_client, session_id):
     supabase_client.table("chat_history").delete().eq(
         "session_id", session_id
     ).execute()
+
+def search_relevant_chunks(supabase_client, query_embedding, session_id, match_threshold=0.3, match_count=4):
+    """
+    Appelle la fonction SQL Supabase pour trouver les morceaux de documents
+    les plus proches sémantiquement de la question, filtrés par session_id.
+    """
+    try:
+        # On appelle la fonction SQL match_document_chunks que l'on a créée dans Supabase
+        response = supabase_client.rpc(
+            "match_document_chunks",
+            {
+                "query_embedding": query_embedding,
+                "match_threshold": match_threshold,
+                "match_count": match_count,
+                "p_session_id": session_id
+            }
+        ).execute()
+        
+        return response.data
+    except Exception as e:
+        print(f"❌ Erreur lors de la recherche sémantique : {e}")
+        return []
+
+def clear_document_chunks(supabase_client, session_id):
+    """
+    Supprime tous les chunks de documents associés à une session dans Supabase 
+    et affiche le résultat dans le terminal.
+    """
+    try:
+        #print(f"🧹 Tentative de suppression des chunks pour la session : {session_id}")
+        response = supabase_client.table("document_chunks").delete().eq("session_id", session_id).execute()
+        print(f"🧹 Document supprimé de la base pour la session {session_id[:8]}...")
+    except Exception as e:
+        print(f"❌ Erreur lors de la suppression des chunks : {e}")
