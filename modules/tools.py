@@ -4,9 +4,29 @@ import urllib.parse
 import json
 
 from ddgs import DDGS
-
+from simpleeval import simple_eval, InvalidExpression
 
 logger = logging.getLogger(__name__)
+
+
+
+def calculatrice(expression: str) -> str:
+    """
+    Évalue une expression mathématique de manière sécurisée grâce à simpleeval.
+    Empêche toute injection de code malveillant.
+    """
+    try:
+        # Nettoyage basique de l'expression
+        expression = expression.strip()
+        
+        # Évaluation sécurisée
+        resultat = simple_eval(expression)
+        return str(resultat)
+        
+    except (InvalidExpression, ZeroDivisionError, SyntaxError, TypeError) as e:
+        return f"Erreur de calcul : Expression invalide ou non supportée ({e})"
+    except Exception as e:
+        return f"Erreur critique lors du calcul : {str(e)}"
 
 
 def recherche_web(requete: str) -> str:
@@ -38,20 +58,6 @@ def recherche_web(requete: str) -> str:
         return f"Désolé, je n'ai pas réussi à faire la recherche sur Internet pour {requete}."
 
 
-def calculatrice(expression: str) -> str:
-    """
-    Évalue une expression mathématique.
-    Exemple d'expression : '2 + 2', '(45 * 12) / 3'
-    """
-    logger.info(
-        f"🛠️ [TOOL EXECUTED] Calculatrice appelée avec l'expression : {expression}"
-    )
-    try:
-        resultat = eval(expression, {"__builtins__": None}, {})
-        return str(resultat)
-    except Exception as e:
-        logger.error(f"❌ Erreur de calcul sur {expression} : {e}")
-        return f"Erreur lors du calcul : {e}"
 
 
 def meteo(ville: str) -> str:
