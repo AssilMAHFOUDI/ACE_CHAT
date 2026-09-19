@@ -1,12 +1,57 @@
+<<<<<<< Updated upstream
 """
 app.py module used to laucnh ace chat tool
 """
+=======
+import json
+import logging
+import urllib.request
+>>>>>>> Stashed changes
 
 import streamlit as st
 import uuid
 import logging
 
+<<<<<<< Updated upstream
 # --- IMPORTATION DE NOS NOUVEAUX MODULES ---
+=======
+logger = logging.getLogger(__name__)
+
+
+def log_egress_ip():
+    """
+    Logs the public egress IP and its geolocation as seen from the machine
+    that actually runs this code (e.g. the Alwaysdata 'run server').
+
+    This is used to diagnose Gemini's
+    '400 FAILED_PRECONDITION: User location is not supported for the API use'
+    error, which depends on the *origin IP* of the API request.
+    """
+    try:
+        with urllib.request.urlopen(
+            "https://ipinfo.io/json", timeout=10
+        ) as response:
+            data = json.loads(response.read().decode())
+        logger.info(
+            "🌍 [EGRESS IP] ip=%s country=%s city=%s org=%s",
+            data.get("ip"),
+            data.get("country"),
+            data.get("city"),
+            data.get("org"),
+        )
+        return data
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("⚠️ [EGRESS IP] Could not fetch egress IP: %s", exc)
+        return {}
+
+
+# Log the egress IP once at startup so it appears in the run-server logs
+log_egress_ip()
+
+
+# 1. L'en-tête de la page
+st.title("🤖 ACE CHAT ")
+>>>>>>> Stashed changes
 
 from modules.database import (
     init_connection,
