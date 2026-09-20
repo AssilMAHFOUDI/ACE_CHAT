@@ -22,7 +22,7 @@ from modules.document_processor import (
     extract_text_from_file,
     process_and_store_document,
 )
-from modules.ai_engine import (
+from modules.ai_engine_groq import (
     init_ai_client,
     format_history_for_gemini,
     generate_rag_prompt,
@@ -65,7 +65,7 @@ log_egress_ip()
 
 # --- 1. INITIALISATION DES OUTILS ---
 supabase = init_connection()
-cle_api = st.secrets["GEMINI_API_KEY"]
+cle_api = st.secrets["GROQ_API_KEY"]
 client = init_ai_client(cle_api)
 
 # --- 2. GESTION DE LA SESSION ---
@@ -177,9 +177,9 @@ if prompt := st.chat_input("Pose-moi une question sur ton document..."):
     else:
         prompt_pour_ia = prompt
 
-    # B. Traduction de l'historique pour Gemini
+    # B. Conversion de l'historique au format du moteur (OpenAI/Groq)
     gemini_history = format_history_for_gemini(st.session_state.messages)
-    gemini_history.append({"role": "user", "parts": [{"text": prompt_pour_ia}]})
+    gemini_history.append({"role": "user", "content": prompt_pour_ia})
 
     # C. Affichage et Sauvegarde de la question utilisateur
     st.session_state.messages.append({"role": "user", "content": prompt})

@@ -1,6 +1,6 @@
 import pypdf
 
-from modules.ai_engine import get_embedding 
+from modules.ai_engine_groq import get_embedding
 
 def extract_text_from_file(fichier_upload):
     """
