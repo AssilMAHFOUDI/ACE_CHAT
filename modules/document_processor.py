@@ -1,7 +1,5 @@
 import pypdf
 
-from modules.ai_engine_groq import get_embedding
-
 def extract_text_from_file(fichier_upload):
     """
     Extrait le texte d'un fichier uploadé via Streamlit (TXT ou PDF).
@@ -66,21 +64,17 @@ def process_and_store_document(text, file_name, session_id, supabase_client, ai_
         if len(chunk.strip()) < 10:
             continue
             
-        # A. On demande le vecteur (l'embedding) à Gemini
-        vector = get_embedding(chunk, ai_client)
-        
-        # B. On prépare la "boîte" de données pour Supabase
+        # RAG désactivé : plus d'embedding. On ne stocke que le texte brut.
         data = {
             "session_id": session_id,
             "file_name": file_name,
             "content": chunk,
-            "embedding": vector
         }
         
         # C. On insère dans la base de données
         supabase_client.table("document_chunks").insert(data).execute()
         
-    print("✅ Document entièrement vectorisé et sauvegardé dans Supabase !")
+    print("✅ Document découpé et sauvegardé dans Supabase (sans embedding).")
 
 
 

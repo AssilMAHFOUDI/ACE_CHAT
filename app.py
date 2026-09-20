@@ -1,5 +1,9 @@
 """
 app.py module used to launch the ACE CHAT tool.
+
+Note: the RAG (document analysis) mode is disabled for this test branch.
+This keeps the app lightweight (no embedding model, no fastembed) so it fits
+within the Alwaysdata disk quota.
 """
 
 import json
@@ -15,19 +19,11 @@ from modules.database import (
     get_chat_history,
     save_message,
     clear_chat_history,
-    search_relevant_chunks,
-    clear_document_chunks,
-)
-from modules.document_processor import (
-    extract_text_from_file,
-    process_and_store_document,
 )
 from modules.ai_engine_groq import (
     init_ai_client,
     format_history_for_gemini,
-    generate_rag_prompt,
     get_ai_response,
-    get_embedding,
 )
 
 # On force Python à afficher les logs INFO dans le terminal
@@ -39,10 +35,6 @@ def log_egress_ip():
     """
     Affiche dans les logs l'IP publique sortante (et sa géolocalisation) telle
     que vue depuis la machine qui exécute réellement ce code.
-
-    Utile pour diagnostiquer l'erreur Gemini :
-    '400 FAILED_PRECONDITION: User location is not supported for the API use',
-    qui dépend de l'IP d'origine de la requête (et non de la géoloc de l'utilisateur).
     """
     try:
         with urllib.request.urlopen("https://ipinfo.io/json", timeout=10) as response:
@@ -84,58 +76,19 @@ if "messages" not in st.session_state:
             {"role": row["role"], "content": row["content"]}
         )
 
-# --- 4. BARRE LATÉRALE (INTERFACE SEULEMENT) ---
+# --- 4. BARRE LATÉRALE ---
 with st.sidebar:
     st.header("⚙️ Paramètres")
-    mode = st.radio(
-        "Choisis le mode :", ["💬 Chat Classique", "📄 Analyse de Document"]
-    )
+    st.info("ℹ️ Mode « Analyse de Document » (RAG) désactivé pour ce test.")
     st.divider()
 
-    texte_document = ""
-    if mode == "📄 Analyse de Document":
-        fichier_upload = st.file_uploader("Charge ton document", type=["txt", "pdf"])
-
-        if fichier_upload:
-            # 1. On extrait le texte
-            texte_document = extract_text_from_file(fichier_upload)
-
-            # 2. On vérifie si ce fichier a DÉJÀ été traité dans cette session
-            if (
-                "fichier_traite" not in st.session_state
-                or st.session_state.fichier_traite != fichier_upload.name
-            ):
-                # On affiche un petit spinner pendant que Gemini calcule les vecteurs
-                with st.spinner(
-                    "🧠 Découpage et vectorisation du document en cours..."
-                ):
-                    process_and_store_document(
-                        text=texte_document,
-                        file_name=fichier_upload.name,
-                        session_id=st.session_state.session_id,
-                        supabase_client=supabase,
-                        ai_client=client,
-                    )
-                # On marque le fichier comme "traité" pour ne pas le refaire au prochain message
-                st.session_state.fichier_traite = fichier_upload.name
-
-            st.success("✅ Fichier prêt et mémorisé dans Supabase !")
-
-    st.divider()
     if st.button("🗑️ Recommencer la discussion"):
-        # 1. On nettoie les chunks dans Supabase avant de changer de session
-        clear_document_chunks(supabase, st.session_state.session_id)
-
-        # 2. On efface l'historique chat en base
+        # 1. On efface l'historique chat en base
         clear_chat_history(supabase, st.session_state.session_id)
 
-        # 3. On génère un tout nouveau session_id pour repartir à zéro
+        # 2. On génère un tout nouveau session_id pour repartir à zéro
         st.session_state.session_id = str(uuid.uuid4())
         st.session_state.messages = []
-
-        # 4. On oublie le fichier traité
-        if "fichier_traite" in st.session_state:
-            del st.session_state["fichier_traite"]
 
         st.rerun()
 
@@ -145,37 +98,9 @@ for msg in st.session_state.messages:
         st.markdown(msg["content"])
 
 # --- 6. GESTION D'UN NOUVEAU MESSAGE ---
-if prompt := st.chat_input("Pose-moi une question sur ton document..."):
-    # A. Préparation de la question pour l'IA
-    if mode == "📄 Analyse de Document":
-        if "fichier_traite" not in st.session_state:
-            with st.chat_message("assistant"):
-                st.warning(
-                    "⚠️ Merci de charger un document dans le menu de gauche avant de poser une question."
-                )
-            st.stop()
-
-        # 1. On transforme la question de l'utilisateur en vecteur
-        with st.spinner("🔍 Recherche des passages pertinents dans le document..."):
-            question_vector = get_embedding(prompt, client)
-
-            # 2. On interroge Supabase pour trouver les morceaux les plus proches
-            relevant_chunks = search_relevant_chunks(
-                supabase_client=supabase,
-                query_embedding=question_vector,
-                session_id=st.session_state.session_id,
-            )
-
-        if not relevant_chunks:
-            prompt_pour_ia = (
-                f"L'utilisateur pose cette question : {prompt}, mais aucun "
-                "extrait pertinent n'a été trouvé dans le document."
-            )
-        else:
-            # 3. On génère le prompt RAG intelligent avec les extraits ciblés
-            prompt_pour_ia = generate_rag_prompt(relevant_chunks, prompt)
-    else:
-        prompt_pour_ia = prompt
+if prompt := st.chat_input("Pose-moi une question..."):
+    # A. Préparation de la question pour l'IA (pas de RAG -> prompt brut)
+    prompt_pour_ia = prompt
 
     # B. Conversion de l'historique au format du moteur (OpenAI/Groq)
     gemini_history = format_history_for_gemini(st.session_state.messages)
@@ -191,7 +116,7 @@ if prompt := st.chat_input("Pose-moi une question sur ton document..."):
     with st.chat_message("assistant"):
         try:
             with st.status(
-                "L'Agent analyse les extraits...", expanded=True
+                "L'Agent se met au travail...", expanded=True
             ) as status_box:
 
                 def update_ui_status(message):

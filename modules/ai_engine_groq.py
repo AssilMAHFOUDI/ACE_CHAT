@@ -5,10 +5,10 @@ swapped in by changing a single import in ``app.py``:
 
     from modules.ai_engine_groq import ( ... )
 
-It uses:
-- Groq (https://api.groq.com/openai/v1) for chat + tool calling.
-- fastembed (local ONNX) for 768-dim embeddings, so the Supabase
-  ``vector(768)`` schema is preserved without any embedding API.
+It uses Groq (https://api.groq.com/openai/v1) for chat + tool calling.
+
+Note: local embeddings (fastembed) are removed on this test branch to save
+disk space; the RAG/document mode is therefore disabled.
 """
 
 import json
@@ -16,7 +16,6 @@ import logging
 import datetime
 
 from openai import OpenAI
-from fastembed import TextEmbedding
 
 from modules.tools import calculatrice, meteo, recherche_web
 
@@ -25,10 +24,6 @@ logger = logging.getLogger(__name__)
 # --- Chat model (Groq) ---
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 GROQ_MODEL = "openai/gpt-oss-120b"
-
-# --- Embedding model (local, 768 dims) ---
-EMBEDDING_MODEL = "BAAI/bge-base-en-v1.5"  # 768 dims
-FALLBACK_EMBEDDING_MODEL = "BAAI/bge-base-en-v1.5"
 
 # --- Tool registry + OpenAI-style JSON schemas ---
 AVAILABLE_TOOLS = {
@@ -93,41 +88,9 @@ TOOLS_SCHEMA = [
     },
 ]
 
-# Lazy singleton for the local embedding model (downloaded on first use)
-_embedding_model = None
-
-
-def _get_embedding_model():
-    global _embedding_model
-    if _embedding_model is None:
-        logger.info("Chargement du modele d'embedding local : %s", EMBEDDING_MODEL)
-        try:
-            _embedding_model = TextEmbedding(model_name=EMBEDDING_MODEL)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Modele %s indisponible (%s), repli sur %s",
-                EMBEDDING_MODEL,
-                exc,
-                FALLBACK_EMBEDDING_MODEL,
-            )
-            _embedding_model = TextEmbedding(model_name=FALLBACK_EMBEDDING_MODEL)
-    return _embedding_model
-
-
 def init_ai_client(api_key):
     """Initialise le client Groq (compatible OpenAI)."""
     return OpenAI(api_key=api_key, base_url=GROQ_BASE_URL, timeout=30)
-
-
-def get_embedding(text, client=None):
-    """Retourne un vecteur de 768 dimensions via fastembed (local, sans API).
-
-    Le parametre ``client`` est conserve pour rester compatible avec les
-    appels existants (``get_embedding(text, client)``) mais n'est pas utilise.
-    """
-    model = _get_embedding_model()
-    vector = next(iter(model.embed([text])))
-    return vector.tolist()
 
 
 def format_history_for_gemini(st_messages):
@@ -241,20 +204,3 @@ def _notify_tool_use(status_callback, tool_name, tool_args):
         status_callback(f"Utilisation de l'outil : `{tool_name}`")
 
 
-def generate_rag_prompt(relevant_chunks, user_question):
-    """Construit un prompt RAG a partir des extraits pertinents."""
-    context = "\n\n".join([chunk["content"] for chunk in relevant_chunks])
-
-    prompt = f"""
-    Tu es un assistant IA professionnel. Tu dois repondre a la question de
-    l'utilisateur en te basant **uniquement** sur le contexte fourni ci-dessous.
-    Si la reponse ne se trouve pas dans le contexte, dis honnetement que tu ne
-    sais pas, n'invente rien.
-
-    --- CONTEXTE ---
-    {context}
-    --- FIN DU CONTEXTE ---
-
-    Question de l'utilisateur : {user_question}
-    """
-    return prompt
