@@ -15,7 +15,7 @@ import json
 import logging
 import datetime
 
-from openai import OpenAI
+from openai import OpenAI, BadRequestError
 
 from modules.tools import calculatrice, meteo, recherche_web
 
@@ -128,13 +128,34 @@ def get_ai_response(client, history, status_callback=None):
         if status_callback:
             status_callback(f"Analyse et reflexion (Etape {iteration + 1})...")
 
-        response = client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=messages,
-            tools=TOOLS_SCHEMA,
-            tool_choice="auto",
-            temperature=0.3,
-        )
+        try:
+            response = client.chat.completions.create(
+                model=GROQ_MODEL,
+                messages=messages,
+                tools=TOOLS_SCHEMA,
+                tool_choice="auto",
+                temperature=0.3,
+            )
+        except BadRequestError as exc:
+            # Groq renvoie une 400 "tool_use_failed" quand le modele hallucine
+            # un outil inexistant (ex: open_file). On le corrige et on relance.
+            logger.warning("Appel d'outil invalide, correction en cours : %s", exc)
+            if status_callback:
+                status_callback("Correction d'un appel d'outil invalide...")
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "Erreur : tu as tente d'appeler un outil qui n'existe pas. "
+                        "Tu dois utiliser UNIQUEMENT ces outils : "
+                        + ", ".join(tools_list)
+                        + ". N'invente jamais d'outil, et n'utilise pas de nom "
+                        "comme open_file, read_url ou browse. Pour consulter une "
+                        "page web, passe l'URL dans l'outil 'recherche_web'."
+                    ),
+                }
+            )
+            continue
 
         choice = response.choices[0].message
 
@@ -173,11 +194,17 @@ def get_ai_response(client, history, status_callback=None):
 
 def _build_system_prompt():
     date_du_jour = datetime.datetime.now().strftime("%A %d %B %Y")
+    outils = ", ".join(AVAILABLE_TOOLS.keys())
     return (
         "Tu es ACE CHAT, un assistant utile. "
         f"Nous sommes aujourd'hui le {date_du_jour}. "
         "Utilise cette date comme reference absolue pour toute recherche "
-        "temporelle. Reponds dans la langue de la question."
+        "temporelle. Reponds dans la langue de la question. "
+        f"Tu ne disposes que de ces outils : {outils}. "
+        "N'invente jamais d'outil et n'appelle rien d'autre (pas de open_file, "
+        "read_url, browse, etc.). Pour consulter une page web precise, passe "
+        "son URL a l'outil 'recherche_web'. Pour toute info recente ou actuelle, "
+        "utilise 'recherche_web' avant de repondre."
     )
 
 
