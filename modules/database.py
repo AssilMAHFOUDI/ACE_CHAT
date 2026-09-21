@@ -1,5 +1,9 @@
+import logging
+
 import streamlit as st
 from supabase import create_client
+
+logger = logging.getLogger(__name__)
 
 
 @st.cache_resource
@@ -43,36 +47,90 @@ def clear_chat_history(supabase_client, session_id):
         "session_id", session_id
     ).execute()
 
-def search_relevant_chunks(supabase_client, query_embedding, session_id, match_threshold=0.3, match_count=4):
+
+def search_relevant_chunks(supabase_client, query_embedding, session_id, file_name=None, match_threshold=0.3, match_count=4):
     """
     Appelle la fonction SQL Supabase pour trouver les morceaux de documents
     les plus proches sémantiquement de la question, filtrés par session_id.
+
+    Si `file_name` est fourni, la recherche est en plus limitée à ce document :
+    une session ne peut donc jamais répondre avec les extraits d'un ancien
+    document qui traînerait encore en base.
+
+    La fonction SQL doit accepter le paramètre `p_file_name`
+    (voir la section « Semantic search function » du README).
     """
     try:
         # On appelle la fonction SQL match_document_chunks que l'on a créée dans Supabase
+        parametres = {
+            "query_embedding": query_embedding,
+            "match_threshold": match_threshold,
+            "match_count": match_count,
+            "p_session_id": session_id,
+        }
+        if file_name:
+            parametres["p_file_name"] = file_name
+
         response = supabase_client.rpc(
-            "match_document_chunks",
-            {
-                "query_embedding": query_embedding,
-                "match_threshold": match_threshold,
-                "match_count": match_count,
-                "p_session_id": session_id
-            }
+            "match_document_chunks", parametres
         ).execute()
-        
+
         return response.data
     except Exception as e:
-        print(f"❌ Erreur lors de la recherche sémantique : {e}")
+        message = str(e)
+        if file_name and ("p_file_name" in message or "PGRST202" in message):
+            # La fonction SQL n'a pas encore été migrée : on retombe sur une
+            # recherche limitée à la session pour ne pas bloquer l'application.
+            logger.warning(
+                "⚠️ Filtre par document indisponible : la fonction SQL "
+                "match_document_chunks n'accepte pas encore p_file_name. "
+                "Exécute la migration SQL du README. En attendant, la "
+                "recherche reste limitée à la session."
+            )
+            return search_relevant_chunks(
+                supabase_client,
+                query_embedding,
+                session_id,
+                None,
+                match_threshold,
+                match_count,
+            )
+        logger.error("❌ Erreur lors de la recherche sémantique : %s", e)
         return []
 
-def clear_document_chunks(supabase_client, session_id):
+
+def clear_document_chunks(supabase_client, session_id, file_name=None):
     """
-    Supprime tous les chunks de documents associés à une session dans Supabase 
-    et affiche le résultat dans le terminal.
+    Supprime les chunks de documents d'une session dans Supabase et journalise
+    le résultat.
+
+    Sans `file_name`, tous les chunks de la session sont supprimés (bouton
+    « Recommencer la discussion ») ; avec `file_name`, seuls ceux de ce
+    document le sont.
+
+    Retourne True si la suppression a réussi, False sinon : un échec silencieux
+    laisserait les anciens morceaux en base et fausserait la recherche
+    sémantique en mélangeant deux documents.
     """
     try:
-        #print(f"🧹 Tentative de suppression des chunks pour la session : {session_id}")
-        response = supabase_client.table("document_chunks").delete().eq("session_id", session_id).execute()
-        print(f"🧹 Document supprimé de la base pour la session {session_id[:8]}...")
+        requete = (
+            supabase_client.table("document_chunks")
+            .delete()
+            .eq("session_id", session_id)
+        )
+        if file_name:
+            requete = requete.eq("file_name", file_name)
+        requete.execute()
+        logger.info(
+            "🧹 Chunks supprimés pour la session %s%s",
+            session_id[:8],
+            f" (document {file_name})" if file_name else "",
+        )
+        return True
     except Exception as e:
-        print(f"❌ Erreur lors de la suppression des chunks : {e}")
+        logger.error(
+            "❌ Erreur lors de la suppression des chunks (session %s) : %s",
+            session_id[:8],
+            e,
+        )
+        return False

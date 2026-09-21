@@ -136,12 +136,42 @@ def generate_rag_prompt(relevant_chunks, user_question):
 
 def get_embedding(text, client):
     """
-    Transforme un texte en vecteur (embedding) de 768 dimensions 
+    Transforme un texte en vecteur (embedding) de 3072 dimensions 
     en utilisant le modèle d'embedding de Gemini.
     """
-    response = client.models.embed_content(
-        model='gemini-embedding-2',
-        contents=text
-    )
-    # On retourne la liste des 768 nombres
-    return response.embeddings[0].values
+    return get_embeddings([text], client)[0]
+
+
+def get_embeddings(texts, client, batch_size=20):
+    """
+    Vectorise plusieurs textes en un minimum d'appels à l'API Gemini.
+
+    On envoie les morceaux par paquets de `batch_size` au lieu de faire un
+    appel par morceau, ce qui accélère fortement l'ingestion d'un gros
+    document.
+
+    Attention : pour obtenir plusieurs vecteurs, il faut passer une liste
+    d'objets `types.Content` explicites. Une simple liste de chaînes
+    (`contents=["a", "b"]`) est interprétée par l'API comme UN SEUL contenu
+    composé de deux parties, et un seul vecteur est alors renvoyé.
+
+    Retourne la liste des vecteurs, dans le même ordre que `texts`.
+    """
+    vectors = []
+    for start in range(0, len(texts), batch_size):
+        batch = texts[start:start + batch_size]
+        response = client.models.embed_content(
+            model='gemini-embedding-2',
+            contents=[
+                types.Content(parts=[types.Part(text=text)]) for text in batch
+            ]
+        )
+        if len(response.embeddings) != len(batch):
+            # Sécurité : sans alignement, on associerait un vecteur au mauvais
+            # morceau de texte dans la base.
+            raise RuntimeError(
+                f"L'API d'embedding a renvoyé {len(response.embeddings)} vecteurs "
+                f"pour {len(batch)} textes : alignement impossible."
+            )
+        vectors.extend(embedding.values for embedding in response.embeddings)
+    return vectors

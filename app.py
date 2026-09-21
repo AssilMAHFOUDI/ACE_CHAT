@@ -32,6 +32,7 @@ from modules.ai_engine import (
 
 # On force Python à afficher les logs INFO dans le terminal
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
+logger = logging.getLogger(__name__)
 
 # --- 1. INITIALISATION DES OUTILS ---
 supabase = init_connection()
@@ -73,19 +74,42 @@ with st.sidebar:
             # 2. On vérifie si ce fichier a DÉJÀ été traité dans cette session
             if "fichier_traite" not in st.session_state or st.session_state.fichier_traite != fichier_upload.name:
                 
-                # On affiche un petit spinner pendant que Gemini calcule les vecteurs
-                with st.spinner("🧠 Découpage et vectorisation du document en cours..."):
-                    process_and_store_document(
+                # On affiche une barre de progression pendant que Gemini calcule les vecteurs
+                barre = st.progress(0.0, text="🧠 Découpage du document en cours...")
+
+                def maj_progression(done, total):
+                    barre.progress(
+                        done / total,
+                        text=f"🧠 Vectorisation : {done}/{total} morceaux..."
+                    )
+
+                try:
+                    nb_chunks = process_and_store_document(
                         text=texte_document,
                         file_name=fichier_upload.name,
                         session_id=st.session_state.session_id,
                         supabase_client=supabase,
-                        ai_client=client
+                        ai_client=client,
+                        progress_callback=maj_progression
                     )
-                # On marque le fichier comme "traité" pour ne pas le refaire au prochain message
-                st.session_state.fichier_traite = fichier_upload.name
+                except Exception as erreur:
+                    nb_chunks = None
+                    logger.exception("Échec de l'ingestion du document")
+                    barre.empty()
+                    st.error(f"❌ Impossible de mémoriser ce document : {erreur}")
+
+                if nb_chunks:
+                    barre.progress(1.0, text=f"✅ {nb_chunks} morceaux vectorisés")
+                    # On marque le fichier comme "traité" pour ne pas le refaire au prochain message
+                    st.session_state.fichier_traite = fichier_upload.name
+                elif nb_chunks == 0:
+                    barre.empty()
+                    st.warning(
+                        "⚠️ Aucun texte exploitable trouvé dans ce document (PDF scanné ?)."
+                    )
                 
-            st.success("✅ Fichier prêt et mémorisé dans Supabase !")
+            if st.session_state.get("fichier_traite") == fichier_upload.name:
+                st.success("✅ Fichier prêt et mémorisé dans Supabase !")
 
     st.divider()
     if st.button("🗑️ Recommencer la discussion"):
@@ -132,6 +156,8 @@ if prompt := st.chat_input("Pose-moi une question sur ton document..."):
             relevant_chunks = search_relevant_chunks(
                 supabase_client=supabase,
                 query_embedding=question_vector,
+                # On limite la recherche au document courant de la session
+                file_name=st.session_state.get("fichier_traite"),
                 session_id=st.session_state.session_id
             )
             

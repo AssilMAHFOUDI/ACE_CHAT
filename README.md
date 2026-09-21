@@ -85,13 +85,13 @@ When a document is uploaded in **Document Analysis** mode:
 
 1. **Extraction** - `extract_text_from_file()` reads the text from the `.txt` or `.pdf`.
 2. **Chunking** - `split_text_into_chunks()` splits the text into ~1000-character chunks with a 200-character overlap to preserve context across boundaries.
-3. **Embedding** - each chunk is converted into a 768-dimensional vector via `get_embedding()` (model `gemini-embedding-2`).
-4. **Storage** - each chunk is stored in the Supabase `document_chunks` table alongside its vector.
+3. **Embedding** - the chunks are converted into 3072-dimensional vectors by `get_embeddings()`, which calls the `gemini-embedding-2` model **by batches** (one request per 20 chunks) instead of one request per chunk.
+4. **Storage** - the session's previous chunks are deleted first, then the new chunks are inserted in batches. A new document therefore always **replaces** the previous one for that session.
 
 When a question is asked:
 
 1. The question is embedded with the same model.
-2. `search_relevant_chunks()` calls the Supabase RPC **`match_document_chunks`** to retrieve the most similar chunks (cosine similarity, `match_threshold = 0.3`, `match_count = 4`), filtered by `session_id`.
+2. `search_relevant_chunks()` calls the Supabase RPC **`match_document_chunks`** to retrieve the most similar chunks (cosine similarity, `match_threshold = 0.3`, `match_count = 4`), filtered by `session_id` **and by `file_name`** - the document currently loaded. An answer can therefore never mix two documents, even if old rows were still present in the table.
 3. The retrieved chunks are combined into a context and injected into the prompt by `generate_rag_prompt()`.
 4. The model answers **only** from the provided context, or states it doesn't know.
 
@@ -184,21 +184,26 @@ create table document_chunks (
   session_id text not null,
   file_name text,
   content text not null,
-  embedding vector(768),       -- 768-dim vectors from gemini-embedding-2
+  embedding vector(3072),      -- 3072-dim vectors from gemini-embedding-2
   created_at timestamptz default now()
 );
 ```
 
 #### Semantic search function (RPC)
 
-`database.py` calls an RPC named `match_document_chunks`. Example implementation:
+`database.py` calls an RPC named `match_document_chunks`, passing the session **and the document name** (`p_file_name`). Example implementation (to paste in the Supabase SQL editor):
 
 ```sql
+-- La fonction est identifiée par sa signature : pour ajouter p_file_name on la
+-- supprime d'abord (PostgreSQL ne sait pas modifier une signature existante).
+drop function if exists match_document_chunks(vector, float, int, text);
+
 create or replace function match_document_chunks(
-  query_embedding vector(768),
+  query_embedding vector(3072),
   match_threshold float,
   match_count int,
-  p_session_id text
+  p_session_id text,
+  p_file_name text default null
 )
 returns table (
   id bigint,
@@ -213,11 +218,14 @@ as $$
     1 - (document_chunks.embedding <=> query_embedding) as similarity
   from document_chunks
   where document_chunks.session_id = p_session_id
+    and (p_file_name is null or document_chunks.file_name = p_file_name)
     and 1 - (document_chunks.embedding <=> query_embedding) > match_threshold
   order by document_chunks.embedding <=> query_embedding
   limit match_count;
 $$;
 ```
+
+> **Required migration:** the `p_file_name` parameter must exist in the database. Until the block above is executed, the application logs `⚠️ Filtre par document indisponible` on the first question and falls back to a session-only search (the document filter is simply skipped).
 
 ---
 
@@ -264,7 +272,7 @@ The project includes a `.devcontainer` configuration. In a Codespace, the app st
 ## Possible Improvements
 
 - Secure the calculator with a dedicated expression evaluator.
-- Batch embeddings and database inserts for faster document ingestion.
+- Support several documents per session (a new upload currently replaces the previous document).
 - Add HTTP timeouts to network tools (`tools.py`).
 - Bound/trim the conversation history sent to Gemini.
 - Introduce explicit planning and self-critique to strengthen the agent's autonomy.
