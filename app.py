@@ -63,13 +63,13 @@ with st.sidebar:
     )
     st.divider()
 
-    texte_document = ""
     if mode == "📄 Analyse de Document":
         fichier_upload = st.file_uploader("Charge ton document", type=["txt", "pdf"])
         
         if fichier_upload:
-            # 1. On extrait le texte (comme avant)
-            texte_document = extract_text_from_file(fichier_upload)
+            # 1. On ne lit le fichier que lorsqu'il est nouveau : Streamlit
+            # réexécute tout le script à chaque message, et le flux du fichier
+            # est déjà consommé après la première lecture (pypdf le verrait vide).
             
             # 2. On vérifie si ce fichier a DÉJÀ été traité dans cette session
             if "fichier_traite" not in st.session_state or st.session_state.fichier_traite != fichier_upload.name:
@@ -84,6 +84,9 @@ with st.sidebar:
                     )
 
                 try:
+                    # La lecture est dans le try : un PDF vide ou corrompu donne
+                    # un message clair au lieu d'une trace dans l'interface.
+                    texte_document = extract_text_from_file(fichier_upload)
                     nb_chunks = process_and_store_document(
                         text=texte_document,
                         file_name=fichier_upload.name,

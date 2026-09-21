@@ -1,6 +1,7 @@
 import logging
 
 import pypdf
+from pypdf.errors import PdfReadError
 
 from modules.ai_engine import get_embeddings
 from modules.database import clear_document_chunks
@@ -16,19 +17,43 @@ INSERT_BATCH_SIZE = 50
 def extract_text_from_file(fichier_upload):
     """
     Extrait le texte d'un fichier uploadé via Streamlit (TXT ou PDF).
+
+    Lève une ValueError si le fichier est vide ou illisible : l'interface
+    affiche alors un message compréhensible au lieu d'une trace pypdf.
     """
     if fichier_upload is None:
         return ""
 
-    if fichier_upload.name.endswith(".txt"):
-        return fichier_upload.getvalue().decode("utf-8")
+    # On se replace au début du flux : pypdf lit à partir de la position
+    # courante, et Streamlit réutilise le même objet d'un rerun à l'autre.
+    # Sans ce seek(0), une seconde lecture voit un fichier de 0 octet.
+    try:
+        fichier_upload.seek(0)
+    except (AttributeError, OSError, ValueError):
+        pass
 
-    elif fichier_upload.name.endswith(".pdf"):
-        pdf_reader = pypdf.PdfReader(fichier_upload)
-        texte_document = "\n".join(
-            [page.extract_text() for page in pdf_reader.pages if page.extract_text()]
-        )
-        return texte_document
+    try:
+        contenu = fichier_upload.getvalue()
+    except AttributeError:
+        contenu = b""
+
+    if len(contenu) == 0:
+        raise ValueError("le fichier est vide (0 octet).")
+
+    nom_fichier = (getattr(fichier_upload, "name", "") or "").lower()
+
+    if nom_fichier.endswith(".txt"):
+        return contenu.decode("utf-8", errors="replace")
+
+    if nom_fichier.endswith(".pdf"):
+        try:
+            pdf_reader = pypdf.PdfReader(fichier_upload)
+            if pdf_reader.is_encrypted and not pdf_reader.decrypt(""):
+                raise ValueError("le PDF est protégé par un mot de passe.")
+            pages = [page.extract_text() for page in pdf_reader.pages]
+        except PdfReadError as erreur:
+            raise ValueError(f"le PDF est illisible ({erreur}).") from erreur
+        return "\n".join(texte for texte in pages if texte)
 
     return ""
 
