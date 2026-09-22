@@ -1,36 +1,37 @@
 """
-app.py module used to laucnh ace chat tool
+app.py: Streamlit entry point for ACE CHAT (UI only; logic lives in modules/ and services/)
 """
 
 import streamlit as st
-import uuid
 import logging
 
 # --- IMPORTATION DE NOS NOUVEAUX MODULES ---
 
-from modules.database import (
-    init_connection,
-    get_chat_history,
-    save_message,
-    clear_chat_history,
-    search_relevant_chunks,
-    clear_document_chunks,
-    list_session_documents,
-    filtre_document_disponible,
-)
-from modules.config import configurer_logging
-from modules.document_processor import (
-    extract_text_from_file,
-    process_and_store_document  # 💡 NOUVEAU
-)
 from modules.ai_engine import (
-    init_ai_client,
     format_history_for_gemini,
-    generate_rag_prompt,
     get_ai_response,
-    get_embedding,
+    init_ai_client,
 )
-
+from modules.database import init_connection
+from modules.config import configurer_logging
+from services.base_connaissance import (
+    documents_indexes,
+    indexer_document,
+    supprimer_document,
+    document_deja_indexe,
+)
+from services.recherche import (
+    chercher_passages,
+    construire_prompt,
+    extraire_sources,
+    filtre_applique_par_base,
+)
+from services.session import (
+    charger_historique,
+    enregistrer_message,
+    nouvel_identifiant,
+    reinitialiser_session,
+)
 
 
 # On force Python à afficher les logs INFO dans le terminal
@@ -44,19 +45,15 @@ client = init_ai_client(cle_api)
 
 # --- 2. GESTION DE LA SESSION ---
 if "session_id" not in st.session_state:
-    st.session_state.session_id = str(uuid.uuid4())
+    st.session_state.session_id = nouvel_identifiant()
 
 st.title("🤖 ACE CHAT")
 
 # --- 3. MÉMOIRE ---
 if "messages" not in st.session_state:
-    st.session_state.messages = []
-    # On délègue la récupération de l'historique au module database
-    historique_db = get_chat_history(supabase, st.session_state.session_id)
-    for row in historique_db:
-        st.session_state.messages.append(
-            {"role": row["role"], "content": row["content"]}
-        )
+    st.session_state.messages = charger_historique(
+        supabase, st.session_state.session_id
+    )
 
 # --- 4. BARRE LATÉRALE (INTERFACE SEULEMENT) ---
 with st.sidebar:
@@ -73,10 +70,9 @@ with st.sidebar:
     filtre_document = None
 
     if mode == "📄 Analyse de Document":
-        documents = list_session_documents(supabase, st.session_state.session_id)
-        noms_documents = {document["file_name"] for document in documents}
+        documents = documents_indexes(supabase, st.session_state.session_id)
         fichier_upload = st.file_uploader("Charge ton document", type=["txt", "pdf"])
-        
+
         if fichier_upload:
             # On n'indexe que les documents absents de la base : Streamlit
             # réexécute tout le script à chaque message et le flux du fichier est
@@ -84,29 +80,26 @@ with st.sidebar:
             # Recharger un document déjà présent est ignoré (sinon il serait
             # réindexé à chaque message) : pour le mettre à jour, le supprimer
             # avec 🗑️ dans la liste ci-dessous, puis le recharger.
-            
-            if fichier_upload.name not in noms_documents:
-                
+
+            if not document_deja_indexe(documents, fichier_upload.name):
                 # On affiche une barre de progression pendant que Gemini calcule les vecteurs
                 barre = st.progress(0.0, text="🧠 Découpage du document en cours...")
 
                 def maj_progression(done, total):
                     barre.progress(
                         done / total,
-                        text=f"🧠 Vectorisation : {done}/{total} morceaux..."
+                        text=f"🧠 Vectorisation : {done}/{total} morceaux...",
                     )
 
                 try:
                     # La lecture est dans le try : un PDF vide ou corrompu donne
                     # un message clair au lieu d'une trace dans l'interface.
-                    texte_document = extract_text_from_file(fichier_upload)
-                    nb_chunks = process_and_store_document(
-                        text=texte_document,
-                        file_name=fichier_upload.name,
-                        session_id=st.session_state.session_id,
-                        supabase_client=supabase,
-                        ai_client=client,
-                        progress_callback=maj_progression
+                    nb_chunks = indexer_document(
+                        fichier_upload,
+                        st.session_state.session_id,
+                        supabase,
+                        client,
+                        progress_callback=maj_progression,
                     )
                 except Exception as erreur:
                     nb_chunks = None
@@ -128,7 +121,7 @@ with st.sidebar:
                         "⚠️ Aucun texte exploitable : ce document ne contient pas de "
                         "couche texte (PDF composé d'images ou scan)."
                     )
-                
+
             else:
                 st.caption("📄 Ce document est déjà dans la base de connaissance.")
 
@@ -145,7 +138,7 @@ with st.sidebar:
                     key=f"supprimer_{document['file_name']}",
                     help="Supprimer ce document de la base",
                 ):
-                    if clear_document_chunks(
+                    if supprimer_document(
                         supabase, st.session_state.session_id, document["file_name"]
                     ):
                         st.rerun()
@@ -167,25 +160,15 @@ with st.sidebar:
 
     st.divider()
     if st.button("🗑️ Recommencer la discussion"):
-        # 1. On nettoie les chunks dans Supabase avant de changer de session
-        
-        clear_document_chunks(supabase, st.session_state.session_id)
-        
-        # 2. On efface l'historique chat en base
-        clear_chat_history(supabase, st.session_state.session_id)
-        
-        # 3. On génère un tout nouveau session_id pour repartir à zéro
-        st.session_state.session_id = str(uuid.uuid4())
+        # 1. On efface chunks et historique, puis nouvel identifiant de session.
+        st.session_state.session_id = reinitialiser_session(
+            supabase, st.session_state.session_id
+        )
         st.session_state.messages = []
-        
-        # 4. La base de connaissance appartenait à l'ancienne session : la
-        #    nouvelle repart vide. Le sélecteur de recherche est recadré
-        #    automatiquement au prochain affichage (voir la barre latérale).
-            
+
         st.rerun()
 
 
-    
 # --- 5. AFFICHAGE DES MESSAGES ---
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
@@ -194,31 +177,29 @@ for msg in st.session_state.messages:
 # --- 6. GESTION D'UN NOUVEAU MESSAGE ---
 if prompt := st.chat_input("Pose-moi une question sur tes documents..."):
     sources = []
-    
+
     # A. Préparation de la question pour l'IA
     if mode == "📄 Analyse de Document":
         if not documents:
             with st.chat_message("assistant"):
-                st.warning("⚠️ Merci de charger un document dans le menu de gauche avant de poser une question.")
+                st.warning(
+                    "⚠️ Merci de charger un document dans le menu de gauche avant de poser une question."
+                )
             st.stop()
-            
+
         # 1. On transforme la question de l'utilisateur en vecteur
         with st.spinner("🔍 Recherche des passages pertinents dans la base..."):
-            
-            question_vector = get_embedding(prompt, client)
-            
-            # 2. On interroge Supabase pour trouver les morceaux les plus proches
-            relevant_chunks = search_relevant_chunks(
-                supabase_client=supabase,
-                query_embedding=question_vector,
-                # None = tous les documents de la base, sinon le document choisi
+            relevant_chunks = chercher_passages(
+                prompt,
+                st.session_state.session_id,
+                supabase,
+                client,
                 file_name=filtre_document,
-                session_id=st.session_state.session_id
             )
-            
+
         # Le filtre par document est-il réellement appliqué par la base ? Sinon on
         # le signale une fois par session (il faut exécuter la migration SQL).
-        if filtre_document_disponible():
+        if filtre_applique_par_base():
             st.session_state.pop("averti_filtre_document", None)
         elif not st.session_state.get("averti_filtre_document"):
             st.session_state["averti_filtre_document"] = True
@@ -229,20 +210,8 @@ if prompt := st.chat_input("Pose-moi une question sur tes documents..."):
                 "le filtrage est fait côté application (résultat approché)."
             )
 
-        if relevant_chunks:
-            # Documents réellement utilisés pour répondre (affichés sous la réponse)
-            sources = sorted(
-                {
-                    chunk["file_name"]
-                    for chunk in relevant_chunks
-                    if chunk.get("file_name")
-                }
-            )
-        if not relevant_chunks:
-            prompt_pour_ia = f"L'utilisateur pose cette question : {prompt}, mais aucun extrait pertinent n'a été trouvé dans la base."
-        else:
-            # 3. On génère le prompt RAG intelligent avec les extraits ciblés
-            prompt_pour_ia = generate_rag_prompt(relevant_chunks, prompt)
+        sources = extraire_sources(relevant_chunks)
+        prompt_pour_ia = construire_prompt(relevant_chunks, prompt)
     else:
         prompt_pour_ia = prompt
 
@@ -252,14 +221,17 @@ if prompt := st.chat_input("Pose-moi une question sur tes documents..."):
 
     # C. Affichage et Sauvegarde de la question utilisateur
     st.session_state.messages.append({"role": "user", "content": prompt})
-    save_message(supabase, st.session_state.session_id, "user", prompt)
+    enregistrer_message(supabase, st.session_state.session_id, "user", prompt)
     with st.chat_message("user"):
         st.markdown(prompt)
 
     # D. Appel à l'IA et Sauvegarde de la réponse
     with st.chat_message("assistant"):
         try:
-            with st.status("L'Agent analyse les extraits...", expanded=True) as status_box:
+            with st.status(
+                "L'Agent analyse les extraits...", expanded=True
+            ) as status_box:
+
                 def update_ui_status(message):
                     status_box.write(message)
 
@@ -274,7 +246,7 @@ if prompt := st.chat_input("Pose-moi une question sur tes documents..."):
             st.session_state.messages.append(
                 {"role": "assistant", "content": texte_reponse}
             )
-            save_message(
+            enregistrer_message(
                 supabase, st.session_state.session_id, "assistant", texte_reponse
             )
             if sources:
