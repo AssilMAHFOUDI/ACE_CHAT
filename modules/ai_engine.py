@@ -33,7 +33,11 @@ def get_ai_response(client, gemini_history, status_callback=None):
 
     # 💡 NOUVEAU : On récupère la date du jour
     date_du_jour = datetime.datetime.now().strftime("%A %d %B %Y")
-    instruction = f"Tu es ACE CHAT. Nous sommes aujourd'hui le {date_du_jour}. Utilise cette date comme référence absolue pour toutes tes recherches temporelles."
+    instruction = (
+        f"Tu es ACE CHAT. Nous sommes aujourd'hui le {date_du_jour}. "
+        "Utilise cette date comme référence absolue pour toutes tes recherches "
+        "temporelles. Réponds toujours dans la langue de la question."
+    )
 
     config = types.GenerateContentConfig(
         system_instruction=instruction,  # 💡 NOUVEAU : On donne l'instruction au modèle
