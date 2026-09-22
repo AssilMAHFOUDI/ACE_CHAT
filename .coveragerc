@@ -4,5 +4,5 @@ source =
     services
 
 [html]
-directory = htmlcov
+directory = tests/htmlcov
 title = ACE CHAT · Couverture

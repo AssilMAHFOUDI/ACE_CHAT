@@ -5,7 +5,7 @@ rejouent exactement les appels réels (table()/rpc()/models.embed_content/
 chats.create), ce qui permet de vérifier les contrats (ordre des écritures,
 batching, replis) sans rien consommer.
 
-Le thème « ACE CHAT » du rapport htmlcov/ est appliqué automatiquement à
+Le thème « ACE CHAT » du rapport tests/htmlcov/ est appliqué automatiquement à
 chaque exécution (hook atexit) : `python -m pytest` suffit.
 """
 
@@ -256,12 +256,12 @@ def filtre_document_par_defaut():
 
 
 # ---------------------------------------------------------------------------
-# Habillage automatique du rapport htmlcov/ (thème sombre + marque)
+# Habillage automatique du rapport tests/htmlcov/ (thème sombre + marque)
 # ---------------------------------------------------------------------------
 
 def themer_htmlcov():
-    """Applique le thème ACE CHAT à htmlcov/ — idempotent (marqueurs)."""
-    dossier = RACINE / "htmlcov"
+    """Applique le thème ACE CHAT à tests/htmlcov/ — idempotent (marqueurs)."""
+    dossier = RACINE / "tests" / "htmlcov"
     theme = pathlib.Path(__file__).with_name("_theme_htmlcov.css")
     # coverage peut nommer la feuille style.css ou style_<hash>.css.
     styles = sorted(dossier.glob("style*.css")) if dossier.exists() else []

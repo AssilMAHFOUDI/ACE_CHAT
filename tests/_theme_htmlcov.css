@@ -80,3 +80,30 @@ hr { border: none; border-top: 1px solid var(--ace-line); }
   font-weight: 700;
   letter-spacing: 0.04em;
 }
+
+/* --- Boutons de navigation (Files / Functions / Classes) ----------------
+   Sans ceci, <a class="button"> hérite de `h2 { color: transparent }`
+   (règle de dégradé ci-dessus) → texte invisible sur fond sombre. */
+header h2 a.button,
+header h2 a.button:link,
+header h2 a.button:visited {
+  color: #e8eaf6 !important;
+  background: linear-gradient(180deg, #262c45, #1a2038);
+  border: 1px solid #3a4166;
+  border-radius: 8px;
+  padding: 3px 12px;
+}
+
+header h2 a.button:hover {
+  text-decoration: none;
+  border-color: var(--ace-violet);
+  background: linear-gradient(180deg, #2d3457, #1f2748);
+}
+
+header h2 a.button.current {
+  color: #ffffff !important;
+  background: linear-gradient(90deg, var(--ace-violet), var(--ace-cyan));
+  border: 1px solid var(--ace-violet);
+  box-shadow: 0 4px 14px rgba(124, 92, 255, 0.35);
+  cursor: default;
+}
