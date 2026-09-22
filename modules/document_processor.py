@@ -89,15 +89,19 @@ def process_and_store_document(text, file_name, session_id, supabase_client, ai_
     """
     Orchestre le découpage, la vectorisation et la sauvegarde dans Supabase.
 
+    La base de connaissance d'une session peut contenir PLUSIEURS documents :
+    seuls les morceaux portant le même nom de fichier sont remplacés (mise à
+    jour d'un document), les autres documents de la session sont conservés.
+
     L'ordre des étapes est volontaire :
 
     1. on calcule d'abord TOUS les vecteurs (aucune écriture en base) ;
-    2. on supprime ensuite les chunks déjà présents pour cette session ;
+    2. on supprime ensuite les chunks déjà présents pour CE document ;
     3. on insère enfin les nouveaux chunks.
 
     Ainsi un document B chargé après un document A ne peut plus mélanger les
     deux dans la recherche sémantique, et un échec de l'API d'embedding laisse
-    l'ancien document intact en base.
+    la version précédente intacte en base.
 
     `progress_callback(done, total)` est appelé après chaque paquet
     d'embeddings pour alimenter la barre de progression de l'interface.
@@ -127,11 +131,12 @@ def process_and_store_document(text, file_name, session_id, supabase_client, ai_
         if progress_callback:
             progress_callback(len(vectors), total)
 
-    # 3. On remplace l'ancien document de cette session
-    if not clear_document_chunks(supabase_client, session_id):
+    # 3. On remplace la version précédente de CE document (les autres documents
+    #    de la session sont conservés)
+    if not clear_document_chunks(supabase_client, session_id, file_name):
         raise RuntimeError(
-            "suppression des anciens chunks impossible : ingestion annulée pour "
-            "ne pas mélanger deux documents dans la même session."
+            "suppression de l'ancienne version de ce document impossible : "
+            "ingestion annulée pour ne pas créer de doublons."
         )
 
     # 4. On insère les nouveaux chunks par paquets

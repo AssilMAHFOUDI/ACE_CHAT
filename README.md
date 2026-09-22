@@ -7,7 +7,9 @@
 ## Features
 
 - **Classic Chat** - Real-time conversation with the Gemini model, with context memory.
-- **Document Analysis (Vector RAG)** - Upload a `.txt` or `.pdf` file. The document is split into overlapping chunks, embedded with Gemini, and stored in Supabase. When you ask a question, the most semantically relevant chunks are retrieved and injected into the prompt.
+- **Document Analysis (Vector RAG)** - Upload one or more `.txt` / `.pdf` files. Each document is split into overlapping chunks, embedded with Gemini, and stored in Supabase, so a session builds a real **knowledge base** holding several documents.
+- **Knowledge Base per Session** - The sidebar lists every indexed document with its chunk count, lets you delete **one document at a time** (🗑️) without touching the others, and lets you aim a question at *all documents* or at *one specific document*.
+- **Sources** - Each retrieved excerpt is labelled with its document (`[Extrait de <fichier>]`) and the file names actually used are shown under the answer (`📎 Sources : ...`).
 - **ReAct Agent Loop** - The model autonomously decides, step by step, whether to call a tool or produce a final answer. Tool results are fed back into the model until it is ready to respond (bounded to 10 iterations).
 - **Tool Calling (Function Calling)** - Gemini can automatically invoke:
   - **Web search** (DuckDuckGo) for news, scores, and recent information.
@@ -45,7 +47,7 @@ ACE_CHAT/
 | --- | --- |
 | `app.py` | Streamlit UI, session management, orchestration, document ingestion trigger, live status boxes. |
 | `modules/ai_engine.py` | Gemini client init, history conversion, ReAct agent loop, tool dispatch, embeddings (`get_embedding`), RAG prompt generation. |
-| `modules/database.py` | Cached Supabase connection, chat history CRUD, semantic chunk search (`search_relevant_chunks`), chunk cleanup. |
+| `modules/database.py` | Cached Supabase connection, chat history CRUD, document listing (`list_session_documents`), semantic chunk search (`search_relevant_chunks`), cleanup of one document or of the whole session (`clear_document_chunks`). |
 | `modules/document_processor.py` | Extract text (`.txt` / `.pdf`), split into overlapping chunks, embed and store each chunk. |
 | `modules/tools.py` | `recherche_web`, `meteo`, and `calculatrice` functions callable by Gemini. |
 
@@ -86,14 +88,15 @@ When a document is uploaded in **Document Analysis** mode:
 1. **Extraction** - `extract_text_from_file()` reads the text from the `.txt` or `.pdf`.
 2. **Chunking** - `split_text_into_chunks()` splits the text into ~1000-character chunks with a 200-character overlap to preserve context across boundaries.
 3. **Embedding** - the chunks are converted into 3072-dimensional vectors by `get_embeddings()`, which calls the `gemini-embedding-2` model **by batches** (one request per 20 chunks) instead of one request per chunk.
-4. **Storage** - the session's previous chunks are deleted first, then the new chunks are inserted in batches. A new document therefore always **replaces** the previous one for that session.
+4. **Storage** - the previous version of **this very document** (same `session_id` + same `file_name`) is deleted first, then the new chunks are inserted in batches. The other documents of the session are left untouched: several documents can coexist in one session, and replacing a document never destroys its neighbours.
 
 When a question is asked:
 
 1. The question is embedded with the same model.
-2. `search_relevant_chunks()` calls the Supabase RPC **`match_document_chunks`** to retrieve the most similar chunks (cosine similarity, `match_threshold = 0.3`, `match_count = 4`), filtered by `session_id` **and by `file_name`** - the document currently loaded. An answer can therefore never mix two documents, even if old rows were still present in the table.
+2. `search_relevant_chunks()` calls the Supabase RPC **`match_document_chunks`** to retrieve the most similar chunks (cosine similarity, `match_threshold = 0.3`, `match_count = 4`). The search is always filtered by `session_id` and, depending on the **🔎 Chercher dans** selector, either by all documents (`file_name = None`) or by one chosen document. Targeting a single document guarantees the answer cannot mix two sources.
 3. The retrieved chunks are combined into a context and injected into the prompt by `generate_rag_prompt()`.
-4. The model answers **only** from the provided context, or states it doesn't know.
+4. The model answers **only** from the provided context, or states it doesn't know. Each excerpt is labelled `[Extrait de <file_name>]` so several documents can be told apart and cited.
+5. The document names actually used are listed under the answer (`📎 Sources : ...`).
 
 This is a genuine retrieval pipeline (embeddings + similarity search), not prompt stuffing.
 
@@ -207,6 +210,7 @@ create or replace function match_document_chunks(
 )
 returns table (
   id bigint,
+  file_name text,
   content text,
   similarity float
 )
@@ -214,6 +218,7 @@ language sql stable
 as $$
   select
     document_chunks.id,
+    document_chunks.file_name,
     document_chunks.content,
     1 - (document_chunks.embedding <=> query_embedding) as similarity
   from document_chunks
@@ -226,6 +231,8 @@ $$;
 ```
 
 > **Required migration:** the `p_file_name` parameter must exist in the database. Until the block above is executed, the application logs `⚠️ Filtre par document indisponible` on the first question and falls back to a session-only search (the document filter is simply skipped).
+>
+> Returning `file_name` is what feeds the `[Extrait de <fichier>]` labels and the `📎 Sources` line. Without the migration the app still answers (session-only search) but shows no source.
 
 ---
 
@@ -247,18 +254,22 @@ The project includes a `.devcontainer` configuration. In a Codespace, the app st
 
 1. **Choose a mode** in the sidebar:
    - **Chat Classique** - Chat freely with the assistant (agent + tools).
-   - **Analyse de Document** - Upload a `.txt` or `.pdf` file. It is chunked and vectorized with a spinner, then memorized in Supabase.
-2. **Ask a question** using the input bar at the bottom of the screen.
-   - In document mode, your question is embedded and the most relevant chunks are retrieved before the answer.
-3. **Watch the agent work** - status boxes show each reasoning step and tool call live.
-4. **Reset** the conversation with the *Recommencer la discussion* button - this deletes chat history and document chunks and starts a new session.
+   - **Analyse de Document** - Upload a `.txt` or `.pdf` file. It is chunked, embedded and stored with a progress bar, then added to the session's knowledge base. Uploading another file **adds** a document: it no longer deletes the previous ones.
+2. **Manage the knowledge base** (document mode, sidebar):
+   - Every indexed document is listed with its number of chunks.
+   - The 🗑️ button deletes **only** that document.
+   - *Recommencer la discussion* wipes the whole base and the chat history, then starts a new session.
+3. **Aim your question** with the **🔎 Chercher dans** selector: *📚 Tous les documents* (default) searches the whole base, or pick one document to restrict the search to it.
+4. **Ask a question** using the input bar at the bottom of the screen - it is embedded and the most relevant chunks are retrieved before the answer, which is followed by a `📎 Sources : ...` line.
+5. **Watch the agent work** - status boxes show each reasoning step and tool call live.
+6. **Reset** the conversation with the *Recommencer la discussion* button - this deletes chat history and document chunks and starts a new session.
 
 ### Example prompts
 
 - *"What was the score of Real Madrid's last match?"* -> triggers web search.
 - *"What's the weather in Paris?"* -> triggers the weather tool.
 - *"What is (45 * 12) / 3?"* -> triggers the calculator.
-- In document mode: *"Summarize this document"*, then *"and in English?"*.
+- In document mode: *"Summarize this document"*, then *"and in English?"* - or, with several documents: *"Compare my CV and my cover letter"* (search on *📚 Tous les documents*).
 
 ---
 
@@ -272,7 +283,7 @@ The project includes a `.devcontainer` configuration. In a Codespace, the app st
 ## Possible Improvements
 
 - Secure the calculator with a dedicated expression evaluator.
-- Support several documents per session (a new upload currently replaces the previous document).
+- Re-index a document without deleting it first (today: remove it with 🗑️, then upload it again).
 - Add HTTP timeouts to network tools (`tools.py`).
 - Bound/trim the conversation history sent to Gemini.
 - Introduce explicit planning and self-critique to strengthen the agent's autonomy.

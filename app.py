@@ -15,6 +15,7 @@ from modules.database import (
     clear_chat_history,
     search_relevant_chunks,
     clear_document_chunks,
+    list_session_documents,
 )
 from modules.document_processor import (
     extract_text_from_file,
@@ -63,16 +64,26 @@ with st.sidebar:
     )
     st.divider()
 
+    # Base de connaissance de la session : relue depuis Supabase à chaque
+    # exécution (source de vérité), donc toujours à jour après un ajout ou une
+    # suppression de document.
+    documents = []
+    filtre_document = None
+
     if mode == "📄 Analyse de Document":
+        documents = list_session_documents(supabase, st.session_state.session_id)
+        noms_documents = {document["file_name"] for document in documents}
         fichier_upload = st.file_uploader("Charge ton document", type=["txt", "pdf"])
         
         if fichier_upload:
-            # 1. On ne lit le fichier que lorsqu'il est nouveau : Streamlit
-            # réexécute tout le script à chaque message, et le flux du fichier
-            # est déjà consommé après la première lecture (pypdf le verrait vide).
+            # On n'indexe que les documents absents de la base : Streamlit
+            # réexécute tout le script à chaque message et le flux du fichier est
+            # déjà consommé après la première lecture (pypdf le verrait vide).
+            # Recharger un document déjà présent est ignoré (sinon il serait
+            # réindexé à chaque message) : pour le mettre à jour, le supprimer
+            # avec 🗑️ dans la liste ci-dessous, puis le recharger.
             
-            # 2. On vérifie si ce fichier a DÉJÀ été traité dans cette session
-            if "fichier_traite" not in st.session_state or st.session_state.fichier_traite != fichier_upload.name:
+            if fichier_upload.name not in noms_documents:
                 
                 # On affiche une barre de progression pendant que Gemini calcule les vecteurs
                 barre = st.progress(0.0, text="🧠 Découpage du document en cours...")
@@ -103,16 +114,54 @@ with st.sidebar:
 
                 if nb_chunks:
                     barre.progress(1.0, text=f"✅ {nb_chunks} morceaux vectorisés")
-                    # On marque le fichier comme "traité" pour ne pas le refaire au prochain message
-                    st.session_state.fichier_traite = fichier_upload.name
+                    # Le document rejoint la base tout de suite dans l'affichage ;
+                    # au rendu suivant la liste est relue depuis Supabase.
+                    documents.append(
+                        {"file_name": fichier_upload.name, "chunks": nb_chunks}
+                    )
+                    documents.sort(key=lambda document: document["file_name"])
                 elif nb_chunks == 0:
                     barre.empty()
                     st.warning(
-                        "⚠️ Aucun texte exploitable trouvé dans ce document (PDF scanné ?)."
+                        "⚠️ Aucun texte exploitable : ce document ne contient pas de "
+                        "couche texte (PDF composé d'images ou scan)."
                     )
                 
-            if st.session_state.get("fichier_traite") == fichier_upload.name:
-                st.success("✅ Fichier prêt et mémorisé dans Supabase !")
+            else:
+                st.caption("📄 Ce document est déjà dans la base de connaissance.")
+
+        st.divider()
+        st.subheader("📚 Base de connaissance")
+        if documents:
+            for document in documents:
+                colonne_nom, colonne_suppression = st.columns([5, 1])
+                colonne_nom.write(
+                    f"📄 {document['file_name']} — {document['chunks']} morceaux"
+                )
+                if colonne_suppression.button(
+                    "🗑️",
+                    key=f"supprimer_{document['file_name']}",
+                    help="Supprimer ce document de la base",
+                ):
+                    if clear_document_chunks(
+                        supabase, st.session_state.session_id, document["file_name"]
+                    ):
+                        st.rerun()
+                    else:
+                        st.error("❌ Suppression impossible (voir les logs).")
+
+            options_recherche = ["📚 Tous les documents"] + [
+                document["file_name"] for document in documents
+            ]
+            if st.session_state.get("filtre_document") not in options_recherche:
+                st.session_state.filtre_document = options_recherche[0]
+            choix_recherche = st.selectbox(
+                "🔎 Chercher dans :", options_recherche, key="filtre_document"
+            )
+            if choix_recherche != options_recherche[0]:
+                filtre_document = choix_recherche
+        else:
+            st.caption("Aucun document dans cette session pour le moment.")
 
     st.divider()
     if st.button("🗑️ Recommencer la discussion"):
@@ -127,9 +176,9 @@ with st.sidebar:
         st.session_state.session_id = str(uuid.uuid4())
         st.session_state.messages = []
         
-        # 4. On oublie le fichier traité
-        if "fichier_traite" in st.session_state:
-            del st.session_state["fichier_traite"]
+        # 4. La base de connaissance appartenait à l'ancienne session : la
+        #    nouvelle repart vide. Le sélecteur de recherche est recadré
+        #    automatiquement au prochain affichage (voir la barre latérale).
             
         st.rerun()
 
@@ -141,17 +190,18 @@ for msg in st.session_state.messages:
         st.markdown(msg["content"])
 
 # --- 6. GESTION D'UN NOUVEAU MESSAGE ---
-if prompt := st.chat_input("Pose-moi une question sur ton document..."):
+if prompt := st.chat_input("Pose-moi une question sur tes documents..."):
+    sources = []
     
     # A. Préparation de la question pour l'IA
     if mode == "📄 Analyse de Document":
-        if "fichier_traite" not in st.session_state:
+        if not documents:
             with st.chat_message("assistant"):
                 st.warning("⚠️ Merci de charger un document dans le menu de gauche avant de poser une question.")
             st.stop()
             
         # 1. On transforme la question de l'utilisateur en vecteur
-        with st.spinner("🔍 Recherche des passages pertinents dans le document..."):
+        with st.spinner("🔍 Recherche des passages pertinents dans la base..."):
             
             question_vector = get_embedding(prompt, client)
             
@@ -159,13 +209,22 @@ if prompt := st.chat_input("Pose-moi une question sur ton document..."):
             relevant_chunks = search_relevant_chunks(
                 supabase_client=supabase,
                 query_embedding=question_vector,
-                # On limite la recherche au document courant de la session
-                file_name=st.session_state.get("fichier_traite"),
+                # None = tous les documents de la base, sinon le document choisi
+                file_name=filtre_document,
                 session_id=st.session_state.session_id
             )
             
+        if relevant_chunks:
+            # Documents réellement utilisés pour répondre (affichés sous la réponse)
+            sources = sorted(
+                {
+                    chunk["file_name"]
+                    for chunk in relevant_chunks
+                    if chunk.get("file_name")
+                }
+            )
         if not relevant_chunks:
-            prompt_pour_ia = f"L'utilisateur pose cette question : {prompt}, mais aucun extrait pertinent n'a été trouvé dans le document."
+            prompt_pour_ia = f"L'utilisateur pose cette question : {prompt}, mais aucun extrait pertinent n'a été trouvé dans la base."
         else:
             # 3. On génère le prompt RAG intelligent avec les extraits ciblés
             prompt_pour_ia = generate_rag_prompt(relevant_chunks, prompt)
@@ -203,6 +262,8 @@ if prompt := st.chat_input("Pose-moi une question sur ton document..."):
             save_message(
                 supabase, st.session_state.session_id, "assistant", texte_reponse
             )
+            if sources:
+                st.caption("📎 Sources : " + ", ".join(sources))
 
         except Exception as e:
             st.error(f"Erreur : {e}")

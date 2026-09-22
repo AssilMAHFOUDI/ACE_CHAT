@@ -120,11 +120,19 @@ def generate_rag_prompt(relevant_chunks, user_question):
     Crée un prompt enrichi en combinant uniquement les extraits pertinents 
     trouvés dans la base de données et la question de l'utilisateur.
     """
-    context = "\n\n".join([chunk["content"] for chunk in relevant_chunks])
+    # On étiquette chaque extrait avec son document source : la session peut
+    # contenir plusieurs documents et le modèle peut ainsi citer ses sources.
+    blocs = []
+    for chunk in relevant_chunks:
+        source = chunk.get("file_name") if hasattr(chunk, "get") else None
+        entete = f"[Extrait de {source}]" if source else "[Extrait]"
+        blocs.append(f"{entete}\n{chunk['content']}")
+    context = "\n\n".join(blocs)
     
     prompt = f"""
     Tu es un assistant IA professionnel. Tu dois répondre à la question de l'utilisateur en te basant **uniquement** sur le contexte fourni ci-dessous. 
     Si la réponse ne se trouve pas dans le contexte, dis honnêtement que tu ne sais pas, n'invente rien.
+    Quand plusieurs documents sont fournis, précise de quel extrait provient l'information.
 
     --- CONTEXTE ---
     {context}

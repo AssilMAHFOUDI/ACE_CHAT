@@ -99,6 +99,41 @@ def search_relevant_chunks(supabase_client, query_embedding, session_id, file_na
         return []
 
 
+def list_session_documents(supabase_client, session_id):
+    """
+    Liste les documents indexés pour une session.
+
+    Retourne une liste triée de dictionnaires `{"file_name": ..., "chunks": n}`.
+    Elle sert à afficher la base de connaissance dans l'interface et à savoir si
+    un fichier est déjà indexé. Le comptage se fait côté Python : le volume par
+    session reste faible (quelques dizaines à quelques centaines de morceaux).
+    """
+    try:
+        reponse = (
+            supabase_client.table("document_chunks")
+            .select("file_name")
+            .eq("session_id", session_id)
+            .execute()
+        )
+    except Exception as e:
+        logger.error(
+            "❌ Impossible de lister les documents de la session %s : %s",
+            session_id[:8],
+            e,
+        )
+        return []
+
+    compteurs = {}
+    for ligne in reponse.data or []:
+        nom = ligne.get("file_name") or "(sans nom)"
+        compteurs[nom] = compteurs.get(nom, 0) + 1
+
+    return [
+        {"file_name": nom, "chunks": nombre}
+        for nom, nombre in sorted(compteurs.items())
+    ]
+
+
 def clear_document_chunks(supabase_client, session_id, file_name=None):
     """
     Supprime les chunks de documents d'une session dans Supabase et journalise
