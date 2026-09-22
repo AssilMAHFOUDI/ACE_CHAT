@@ -27,7 +27,7 @@ body {
   line-height: 1.55;
 }
 
-h1, h2, h3, h4 {
+body h1, body h2, body h3, body h4 {
   background: linear-gradient(90deg, var(--ace-violet), var(--ace-cyan));
   -webkit-background-clip: text;
   background-clip: text;
@@ -106,4 +106,32 @@ header h2 a.button.current {
   border: 1px solid var(--ace-violet);
   box-shadow: 0 4px 14px rgba(124, 92, 255, 0.35);
   cursor: default;
+}
+
+/* === Rattrapage global : plus aucun texte noir dans le rapport ==========
+   Toute règle sombre de la feuille coverage (et ses variants prefers-color-scheme)
+   est écrasée. Exceptions, toutes de spécificité supérieure :
+   - les titres (corps prefixé) gardent leur dégradé transparent,
+   - header h2 a.button(+ .current) gardent leurs pastilles,
+   - les pourcentages : couleurs posées en inline !important par le JS du
+     conftest (inline important > stylesheet important). */
+body,
+body * {
+  color: #e8eaf6 !important;
+}
+
+/* Liens : cyan du thème, pas la couleur de rattrapage. */
+body a {
+  color: var(--ace-cyan) !important;
+}
+
+/* === Boîtes à fond clair de coverage : assombries, sinon texte clair
+   sur fond #fff/#eee/#ffffcc = invisible. (Les !important battent ici
+   les règles normales #index/#help_panel, quelle que soit leur spécificité.) */
+#filter_container #filter,
+header button,
+#help_panel,
+#source p .annotate.long {
+  background: #10131f !important;
+  border-color: #3a4166 !important;
 }

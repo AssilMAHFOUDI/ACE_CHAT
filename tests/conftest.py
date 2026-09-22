@@ -284,8 +284,9 @@ def themer_htmlcov():
         "document.querySelectorAll('td,span').forEach(function(el){"
         "var t=el.textContent.trim(),x=t.match(/^(\\d+(?:\\.\\d+)?)%$/);"
         "if(!x)return;var v=parseFloat(x[1]);"
-        "el.style.color=v>=90?'#34d399':v>=70?'#fbbf24':'#f87171';"
-        "el.style.fontWeight='700';});})();</script>\n</body>"
+        "var c=v>=90?'#34d399':v>=70?'#fbbf24':'#f87171';"
+        "el.style.setProperty('color',c,'important');"
+        "el.style.setProperty('font-weight','700','important');});})();</script>\n</body>"
     )
     pages = sorted(dossier.glob("*.html")) if dossier.exists() else []
     for page in pages:
