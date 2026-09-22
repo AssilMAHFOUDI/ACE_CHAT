@@ -230,7 +230,11 @@ as $$
 $$;
 ```
 
-> **Required migration:** the `p_file_name` parameter must exist in the database. Until the block above is executed, the application logs `⚠️ Filtre par document indisponible` on the first question and falls back to a session-only search (the document filter is simply skipped).
+> **Required migration:** the `p_file_name` parameter must exist in the database. Until the block above is executed, the application detects it (`⚠️ Filtre par document indisponible côté base` in the logs), shows a warning in the interface, and filters the excerpts itself: it asks the database for a wider slice of the session (5 × `match_count`, at least 20 rows) and keeps only the chosen document. Answers stay usable, but the result is approximate (the top-N is computed before the application-side filter).
+>
+> Returning `file_name` feeds the `[Extrait de <fichier>]` labels, the `📎 Sources` line and that fallback filtering.
+>
+> If the five-parameter call still answers `PGRST202` right after running the block, the PostgREST schema cache is stale: reload it with `notify pgrst, 'reload schema';` (or *Project Settings → API → Reload* in the Supabase dashboard) and retry.
 >
 > Returning `file_name` is what feeds the `[Extrait de <fichier>]` labels and the `📎 Sources` line. Without the migration the app still answers (session-only search) but shows no source.
 

@@ -16,6 +16,7 @@ from modules.database import (
     search_relevant_chunks,
     clear_document_chunks,
     list_session_documents,
+    filtre_document_disponible,
 )
 from modules.document_processor import (
     extract_text_from_file,
@@ -214,6 +215,19 @@ if prompt := st.chat_input("Pose-moi une question sur tes documents..."):
                 session_id=st.session_state.session_id
             )
             
+        # Le filtre par document est-il réellement appliqué par la base ? Sinon on
+        # le signale une fois par session (il faut exécuter la migration SQL).
+        if filtre_document_disponible():
+            st.session_state.pop("averti_filtre_document", None)
+        elif not st.session_state.get("averti_filtre_document"):
+            st.session_state["averti_filtre_document"] = True
+            st.warning(
+                "⚠️ Le filtre « Chercher dans » n'est pas appliqué par la base : "
+                "la fonction SQL `match_document_chunks` n'accepte pas encore "
+                "`p_file_name`. Exécute la migration SQL du README. En attendant, "
+                "le filtrage est fait côté application (résultat approché)."
+            )
+
         if relevant_chunks:
             # Documents réellement utilisés pour répondre (affichés sous la réponse)
             sources = sorted(

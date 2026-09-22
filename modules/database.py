@@ -48,6 +48,19 @@ def clear_chat_history(supabase_client, session_id):
     ).execute()
 
 
+# La base sait-elle filtrer par document (paramètre p_file_name de la fonction
+# SQL) ? Tant que la migration SQL du README n'est pas exécutée, l'application
+# filtre elle-même et l'interface le signale.
+_filtre_document_par_sql = {"disponible": True}
+
+
+def filtre_document_disponible():
+    """
+    True si le filtre par document a bien été appliqué par la base de données.
+    """
+    return _filtre_document_par_sql["disponible"]
+
+
 def search_relevant_chunks(supabase_client, query_embedding, session_id, file_name=None, match_threshold=0.3, match_count=4):
     """
     Appelle la fonction SQL Supabase pour trouver les morceaux de documents
@@ -75,26 +88,38 @@ def search_relevant_chunks(supabase_client, query_embedding, session_id, file_na
             "match_document_chunks", parametres
         ).execute()
 
+        if file_name:
+            # Le filtre par document est bien pris en charge par la base
+            _filtre_document_par_sql["disponible"] = True
+
         return response.data
     except Exception as e:
         message = str(e)
         if file_name and ("p_file_name" in message or "PGRST202" in message):
-            # La fonction SQL n'a pas encore été migrée : on retombe sur une
-            # recherche limitée à la session pour ne pas bloquer l'application.
+            # La fonction SQL n'a pas encore été migrée : on interroge la session
+            # entière puis on filtre nous-mêmes, pour ne pas bloquer l'application
+            # et pour respecter malgré tout le document choisi par l'utilisateur.
+            _filtre_document_par_sql["disponible"] = False
             logger.warning(
-                "⚠️ Filtre par document indisponible : la fonction SQL "
+                "⚠️ Filtre par document indisponible côté base : la fonction SQL "
                 "match_document_chunks n'accepte pas encore p_file_name. "
-                "Exécute la migration SQL du README. En attendant, la "
-                "recherche reste limitée à la session."
+                "Exécute la migration SQL du README. Filtrage côté application."
             )
-            return search_relevant_chunks(
+            resultats = search_relevant_chunks(
                 supabase_client,
                 query_embedding,
                 session_id,
                 None,
                 match_threshold,
-                match_count,
+                max(match_count * 5, 20),
             )
+            if not any(ligne.get("file_name") for ligne in resultats):
+                # La base ne renvoie même pas le nom du document : impossible de
+                # filtrer proprement, on rend la recherche de la session entière.
+                return resultats[:match_count]
+            return [
+                ligne for ligne in resultats if ligne.get("file_name") == file_name
+            ][:match_count]
         logger.error("❌ Erreur lors de la recherche sémantique : %s", e)
         return []
 
