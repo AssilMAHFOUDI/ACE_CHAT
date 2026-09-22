@@ -1,0 +1,4 @@
+# Outils de développement (les tests) — l'application n'utilise pas ces paquets.
+# Installation : pip install -r requirements-dev.txt
+pytest==9.1.1
+pytest-cov==7.1.0

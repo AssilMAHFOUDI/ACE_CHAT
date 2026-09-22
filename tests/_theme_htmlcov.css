@@ -1,0 +1,82 @@
+/* ACE-CHAT-THEME — habillage automatique du rapport htmlcov/ (généré par tests/conftest.py) */
+
+:root {
+  --ace-bg: #0e1018;
+  --ace-panel: #161a2b;
+  --ace-line: #262c45;
+  --ace-text: #e8eaf6;
+  --ace-dim: #9aa3c7;
+  --ace-violet: #7c5cff;
+  --ace-cyan: #22d3ee;
+  --ace-green: #34d399;
+  --ace-yellow: #fbbf24;
+  --ace-red: #f87171;
+}
+
+html {
+  background: var(--ace-bg);
+}
+
+body {
+  background:
+    radial-gradient(1100px 700px at 15% -10%, #1d2347 0%, transparent 55%),
+    radial-gradient(900px 600px at 110% 110%, #123247 0%, transparent 55%),
+    var(--ace-bg);
+  color: var(--ace-text);
+  font-family: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  line-height: 1.55;
+}
+
+h1, h2, h3, h4 {
+  background: linear-gradient(90deg, var(--ace-violet), var(--ace-cyan));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent !important;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+a { color: var(--ace-cyan); text-decoration: none; }
+a:hover { color: #7dd3fc; text-decoration: underline; }
+
+table {
+  border-collapse: collapse;
+  background: var(--ace-panel);
+  border: 1px solid var(--ace-line);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+th {
+  background: linear-gradient(90deg, #232a4d, #1b2140);
+  color: #cdd5ff;
+  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: 0.07em;
+}
+
+td, th { padding: 10px 14px; border-bottom: 1px solid var(--ace-line); }
+tr:last-child td { border-bottom: none; }
+tbody tr:hover td { background: rgba(124, 92, 255, 0.08); }
+
+code, pre {
+  background: #10131f;
+  border: 1px solid var(--ace-line);
+  border-radius: 8px;
+}
+
+hr { border: none; border-top: 1px solid var(--ace-line); }
+
+/* Bandeau de marque injecté par le script ACE-CHAT-BRAND */
+.ace-brand {
+  display: inline-block;
+  margin: 14px 0 6px;
+  padding: 8px 18px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(124, 92, 255, 0.22), rgba(34, 211, 238, 0.18));
+  border: 1px solid rgba(124, 92, 255, 0.45);
+  color: #dfe4ff;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
