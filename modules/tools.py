@@ -34,7 +34,7 @@ def recherche_web(requete: str) -> str:
     Effectue une recherche sur Internet via DuckDuckGo pour trouver des actualités, des scores sportifs ou des informations récentes.
     Exemple de requête : 'score dernier match Real Madrid', 'actualité tech du jour'
     """
-    logger.info(f"🛠️ [TOOL EXECUTED] Recherche web appelée pour : {requete}")
+    logger.info(f"[TOOL EXECUTED] Recherche web appelée pour : {requete}")
     try:
         # On demande les 3 premiers résultats du web
         results = list(DDGS().text(requete, max_results=3))
@@ -50,11 +50,11 @@ def recherche_web(requete: str) -> str:
             )
 
         reponse_formatee = "\n\n".join(extrait_resultats)
-        logger.info("✅ Recherche web exécutée avec succès.")
+        logger.info("Recherche web exécutée avec succès.")
         return reponse_formatee
 
     except Exception as e:
-        logger.error(f"❌ Erreur lors de la recherche web pour {requete} : {e}")
+        logger.error(f"Erreur lors de la recherche web pour {requete} : {e}")
         return f"Désolé, je n'ai pas réussi à faire la recherche sur Internet pour {requete}."
 
 
@@ -65,7 +65,7 @@ def meteo(ville: str) -> str:
     Donne la météo actuelle pour une ville donnée dans le monde.
     Exemple de ville : 'Paris', 'Madrid', 'Tokyo', 'Dakar'
     """
-    logger.info(f"🛠️ [TOOL EXECUTED] Météo appelée pour la ville : {ville}")
+    logger.info(f"[TOOL EXECUTED] Météo appelée pour la ville : {ville}")
     try:
         # 1. On cherche d'abord les coordonnées géographiques (latitude/longitude) de la ville
         geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={urllib.parse.quote(ville)}&count=1&language=fr&format=json"
@@ -109,11 +109,11 @@ def meteo(ville: str) -> str:
         )
 
         resultat_meteo = f"Météo à {nom_officiel} ({pays}) : {temp}°C, {description}. Humidité : {humidity}%."
-        logger.info(f"✅ Météo récupérée avec succès : {resultat_meteo}")
+        logger.info(f"Météo récupérée avec succès : {resultat_meteo}")
         return resultat_meteo
 
     except Exception as e:
         logger.error(
-            f"❌ Erreur lors de la récupération de la météo pour {ville} : {e}"
+           f"❌ Erreur lors de la récupération de la météo pour {ville} : {e}"
         )
         return f"Désolé, je n'ai pas pu récupérer la météo pour {ville}."

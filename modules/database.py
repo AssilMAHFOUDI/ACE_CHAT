@@ -3,6 +3,8 @@ import logging
 import streamlit as st
 from supabase import create_client
 
+from modules.config import MATCH_COUNT, MATCH_THRESHOLD
+
 logger = logging.getLogger(__name__)
 
 
@@ -61,7 +63,7 @@ def filtre_document_disponible():
     return _filtre_document_par_sql["disponible"]
 
 
-def search_relevant_chunks(supabase_client, query_embedding, session_id, file_name=None, match_threshold=0.3, match_count=4):
+def search_relevant_chunks(supabase_client, query_embedding, session_id, file_name=None, match_threshold=MATCH_THRESHOLD, match_count=MATCH_COUNT):
     """
     Appelle la fonction SQL Supabase pour trouver les morceaux de documents
     les plus proches sémantiquement de la question, filtrés par session_id.
@@ -101,7 +103,7 @@ def search_relevant_chunks(supabase_client, query_embedding, session_id, file_na
             # et pour respecter malgré tout le document choisi par l'utilisateur.
             _filtre_document_par_sql["disponible"] = False
             logger.warning(
-                "⚠️ Filtre par document indisponible côté base : la fonction SQL "
+               "⚠️ Filtre par document indisponible côté base : la fonction SQL "
                 "match_document_chunks n'accepte pas encore p_file_name. "
                 "Exécute la migration SQL du README. Filtrage côté application."
             )
@@ -120,7 +122,7 @@ def search_relevant_chunks(supabase_client, query_embedding, session_id, file_na
             return [
                 ligne for ligne in resultats if ligne.get("file_name") == file_name
             ][:match_count]
-        logger.error("❌ Erreur lors de la recherche sémantique : %s", e)
+        logger.error("Erreur lors de la recherche sémantique : %s", e)
         return []
 
 
@@ -142,7 +144,7 @@ def list_session_documents(supabase_client, session_id):
         )
     except Exception as e:
         logger.error(
-            "❌ Impossible de lister les documents de la session %s : %s",
+           "❌ Impossible de lister les documents de la session %s : %s",
             session_id[:8],
             e,
         )
@@ -182,14 +184,14 @@ def clear_document_chunks(supabase_client, session_id, file_name=None):
             requete = requete.eq("file_name", file_name)
         requete.execute()
         logger.info(
-            "🧹 Chunks supprimés pour la session %s%s",
+           "🧹 Chunks supprimés pour la session %s%s",
             session_id[:8],
             f" (document {file_name})" if file_name else "",
         )
         return True
     except Exception as e:
         logger.error(
-            "❌ Erreur lors de la suppression des chunks (session %s) : %s",
+           "❌ Erreur lors de la suppression des chunks (session %s) : %s",
             session_id[:8],
             e,
         )

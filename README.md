@@ -35,6 +35,7 @@ ACE_CHAT/
     devcontainer.json           # GitHub Codespaces / Dev Container config
   modules/
     __init__.py
+    config.py                   # centralised settings, logging setup, models
     ai_engine.py                # Gemini client, ReAct loop, embeddings, RAG prompt
     database.py                 # Supabase connection, history CRUD, vector search
     document_processor.py       # Text extraction, chunking, vectorization
@@ -49,6 +50,7 @@ ACE_CHAT/
 | `modules/ai_engine.py` | Gemini client init, history conversion, ReAct agent loop, tool dispatch, embeddings (`get_embedding`), RAG prompt generation. |
 | `modules/database.py` | Cached Supabase connection, chat history CRUD, document listing (`list_session_documents`), semantic chunk search (`search_relevant_chunks`), cleanup of one document or of the whole session (`clear_document_chunks`). |
 | `modules/document_processor.py` | Extract text (`.txt` / `.pdf`), split into overlapping chunks, embed and store each chunk. |
+| `modules/config.py` | Centralised constants (chunking, batching, RAG thresholds, Gemini models) and logging setup. |
 | `modules/tools.py` | `recherche_web`, `meteo`, and `calculatrice` functions callable by Gemini. |
 
 ---

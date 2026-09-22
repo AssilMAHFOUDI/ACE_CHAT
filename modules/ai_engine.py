@@ -2,6 +2,7 @@ import logging
 import datetime
 from google import genai
 from google.genai import types
+from modules.config import CHAT_MODEL, EMBEDDING_MODEL, MAX_ITERATIONS
 from modules.tools import calculatrice, meteo, recherche_web
 
 logger = logging.getLogger(__name__)
@@ -45,16 +46,16 @@ def get_ai_response(client, gemini_history, status_callback=None):
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
     )
 
-    logger.info("🧠 Démarrage d'une nouvelle session Agent ReAct.")
+    logger.info("Démarrage d'une nouvelle session Agent ReAct.")
     chat_session = client.chats.create(
-        model="gemini-3.5-flash-lite", history=history_for_session, config=config
+        model=CHAT_MODEL, history=history_for_session, config=config
     )
 
     current_message = latest_user_message
-    max_iterations = 10
+    max_iterations = MAX_ITERATIONS
 
     for iteration in range(max_iterations):
-        logger.info(f"🔄 ReAct Loop - Itération {iteration + 1}")
+        logger.info(f"ReAct Loop - Itération {iteration + 1}")
 
         # 💡 Mise à jour de l'interface
         if status_callback:
@@ -86,7 +87,7 @@ def get_ai_response(client, gemini_history, status_callback=None):
                         status_callback(f"🛠️ Utilisation de l'outil : `{tool_name}`")
 
                 logger.info(
-                    f"🛠️  L'Agent décide d'utiliser : {tool_name} avec les arguments : {tool_args}"
+                   f"🛠️  L'Agent décide d'utiliser : {tool_name} avec les arguments : {tool_args}"
                 )
 
                 if tool_name in AVAILABLE_TOOLS:
@@ -113,7 +114,7 @@ def get_ai_response(client, gemini_history, status_callback=None):
         else:
             if status_callback:
                 status_callback("💬 Rédaction de la réponse finale...")
-            logger.info("💬 L'Agent a terminé son raisonnement et fournit une réponse.")
+            logger.info("L'Agent a terminé son raisonnement et fournit une réponse.")
             return response.text
 
     return "Je suis désolé, le raisonnement était trop complexe et j'ai dû m'arrêter avant de trouver la réponse."
@@ -173,7 +174,7 @@ def get_embeddings(texts, client, batch_size=20):
     for start in range(0, len(texts), batch_size):
         batch = texts[start:start + batch_size]
         response = client.models.embed_content(
-            model='gemini-embedding-2',
+            model=EMBEDDING_MODEL,
             contents=[
                 types.Content(parts=[types.Part(text=text)]) for text in batch
             ]

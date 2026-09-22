@@ -4,14 +4,16 @@ import pypdf
 from pypdf.errors import PdfReadError
 
 from modules.ai_engine import get_embeddings
+from modules.config import (
+    CHUNK_MIN_LENGTH,
+    CHUNK_OVERLAP,
+    CHUNK_SIZE,
+    EMBEDDING_BATCH_SIZE,
+    INSERT_BATCH_SIZE,
+)
 from modules.database import clear_document_chunks
 
 logger = logging.getLogger(__name__)
-
-# Nombre de morceaux envoyés en un seul appel à l'API d'embedding
-EMBEDDING_BATCH_SIZE = 20
-# Nombre de lignes envoyées en un seul INSERT Supabase
-INSERT_BATCH_SIZE = 50
 
 
 def extract_text_from_file(fichier_upload):
@@ -58,7 +60,7 @@ def extract_text_from_file(fichier_upload):
     return ""
 
 
-def split_text_into_chunks(text, chunk_size=1000, overlap=200):
+def split_text_into_chunks(text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
     """
     Découpe un texte long en plusieurs morceaux (chunks)
     avec un chevauchement pour ne pas perdre le sens.
@@ -111,15 +113,15 @@ def process_and_store_document(text, file_name, session_id, supabase_client, ai_
     # 1. On découpe le texte et on ignore les morceaux trop vides
     chunks = [
         chunk
-        for chunk in split_text_into_chunks(text, chunk_size=1000, overlap=200)
-        if len(chunk.strip()) >= 10
+        for chunk in split_text_into_chunks(text)
+        if len(chunk.strip()) >= CHUNK_MIN_LENGTH
     ]
     total = len(chunks)
     logger.info("Découpage terminé : %s morceaux exploitables pour %s.", total, file_name)
 
     if total == 0:
         logger.warning(
-            "⚠️ Aucun morceau exploitable dans %s : rien n'a été stocké.", file_name
+           "⚠️ Aucun morceau exploitable dans %s : rien n'a été stocké.", file_name
         )
         return 0
 
@@ -155,7 +157,7 @@ def process_and_store_document(text, file_name, session_id, supabase_client, ai_
         ).execute()
 
     logger.info(
-        "✅ %s morceaux vectorisés et sauvegardés dans Supabase pour %s.",
+       "✅ %s morceaux vectorisés et sauvegardés dans Supabase pour %s.",
         len(rows),
         file_name,
     )

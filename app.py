@@ -18,6 +18,7 @@ from modules.database import (
     list_session_documents,
     filtre_document_disponible,
 )
+from modules.config import configurer_logging
 from modules.document_processor import (
     extract_text_from_file,
     process_and_store_document  # 💡 NOUVEAU
@@ -33,7 +34,7 @@ from modules.ai_engine import (
 
 
 # On force Python à afficher les logs INFO dans le terminal
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
+configurer_logging()
 logger = logging.getLogger(__name__)
 
 # --- 1. INITIALISATION DES OUTILS ---
