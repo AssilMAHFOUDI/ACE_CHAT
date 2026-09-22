@@ -37,23 +37,31 @@ def test_indexation_remplace_uniquement_le_document_recharge():
     supabase = FakeSupabase(journal=timeline)
     ia = FakeIA(timeline)
     supabase.tables["document_chunks"] = [
-        {"session_id": "s1", "file_name": "A.txt",
-         "content": "ANCIEN", "embedding": [0.0]},
-        {"session_id": "s1", "file_name": "B.txt",
-         "content": "B-INTACT", "embedding": [0.0]},
+        {
+            "session_id": "s1",
+            "file_name": "A.txt",
+            "content": "ANCIEN",
+            "embedding": [0.0],
+        },
+        {
+            "session_id": "s1",
+            "file_name": "B.txt",
+            "content": "B-INTACT",
+            "embedding": [0.0],
+        },
     ]
     contenu = "Bonjour, ceci est un document de test suffisamment long."
     n = indexer_document(
         fichier_upload=fichier("A.txt", contenu),
-        session_id="s1", supabase_client=supabase, ai_client=ia,
+        session_id="s1",
+        supabase_client=supabase,
+        ai_client=ia,
     )
     assert n == 1
-    doc_a = [l for l in supabase.tables["document_chunks"]
-             if l["file_name"] == "A.txt"]
-    doc_b = [l for l in supabase.tables["document_chunks"]
-             if l["file_name"] == "B.txt"]
+    doc_a = [l for l in supabase.tables["document_chunks"] if l["file_name"] == "A.txt"]
+    doc_b = [l for l in supabase.tables["document_chunks"] if l["file_name"] == "B.txt"]
     assert len(doc_a) == 1 and "ANCIEN" not in doc_a[0]["content"]
-    assert doc_b[0]["content"] == "B-INTACT"           # l'autre document, intact
+    assert doc_b[0]["content"] == "B-INTACT"  # l'autre document, intact
     # Ordre critique : vectoriser PUIS purger AVANT d'écrire (jamais l'inverse).
     evenements = [e[0] for e in timeline]
     assert evenements == ["embed", "delete", "insert"]
@@ -67,17 +75,21 @@ def test_indexation_fichier_illisible_ne_touche_rien(supabase, ia):
     with pytest.raises(ValueError, match="vide"):
         indexer_document(
             fichier_upload=fichier("vide.pdf", b""),
-            session_id="s1", supabase_client=supabase, ai_client=ia,
+            session_id="s1",
+            supabase_client=supabase,
+            ai_client=ia,
         )
     assert supabase.journal == []
-    assert supabase.tables["document_chunks"]          # inchangé
+    assert supabase.tables["document_chunks"]  # inchangé
 
 
 def test_indexation_signale_la_progression(supabase, ia):
     progres = []
     indexer_document(
         fichier_upload=fichier("a.txt", "Un contenu assez long pour un morceau."),
-        session_id="s1", supabase_client=supabase, ai_client=ia,
+        session_id="s1",
+        supabase_client=supabase,
+        ai_client=ia,
         progress_callback=lambda a, b: progres.append((a, b)),
     )
     assert progres == [(1, 1)]

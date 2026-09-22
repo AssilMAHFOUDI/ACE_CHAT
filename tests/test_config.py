@@ -29,9 +29,7 @@ def test_modeles_declarés():
 
 def test_configurer_logging_appelle_basicconfig(monkeypatch):
     appels = {}
-    monkeypatch.setattr(
-        logging, "basicConfig", lambda **kwargs: appels.update(kwargs)
-    )
+    monkeypatch.setattr(logging, "basicConfig", lambda **kwargs: appels.update(kwargs))
     config.configurer_logging()
     assert appels["level"] == logging.INFO
     assert "%(levelname)s" in appels["format"]

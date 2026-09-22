@@ -38,9 +38,9 @@ def test_extraire_sources_tri_et_supprime_doublons():
     chunks = [
         {"file_name": "b.pdf"},
         {"file_name": "a.pdf"},
-        {"file_name": "a.pdf"},   # doublon -> fusionné
-        {},                       # sans source -> ignoré
-        {"file_name": ""},        # nom vide -> ignoré
+        {"file_name": "a.pdf"},  # doublon -> fusionné
+        {},  # sans source -> ignoré
+        {"file_name": ""},  # nom vide -> ignoré
     ]
     assert extraire_sources(chunks) == ["a.pdf", "b.pdf"]
     assert extraire_sources([]) == []
@@ -49,14 +49,14 @@ def test_extraire_sources_tri_et_supprime_doublons():
 def test_construire_prompt_avec_extraits_etiquetes():
     chunks = [
         {"file_name": "CV.pdf", "content": "Assil est ingenieur."},
-        {"content": "extrait sans nom"},   # sans file_name -> [Extrait]
+        {"content": "extrait sans nom"},  # sans file_name -> [Extrait]
     ]
     prompt = construire_prompt(chunks, "Qui est Assil ?")
     assert "[Extrait de CV.pdf]" in prompt
     assert "[Extrait]" in prompt
     assert "Assil est ingenieur." in prompt
     assert "Qui est Assil ?" in prompt
-    assert "uniquement" in prompt          # consigne d'honnêteté du RAG
+    assert "uniquement" in prompt  # consigne d'honnêteté du RAG
 
 
 def test_construire_prompt_sans_extrait_préviens_du_repli():
@@ -80,4 +80,3 @@ def test_filtre_applique_par_base_apres_repli(supabase, ia):
     supabase.gestionnaire_rpc = base_non_migree
     chercher_passages("q", "s1", supabase, ia, file_name="a.pdf")
     assert filtre_applique_par_base() is False
-
