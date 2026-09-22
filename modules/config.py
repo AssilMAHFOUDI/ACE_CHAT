@@ -27,6 +27,9 @@ MAX_ITERATIONS = 10      # boucle raison/act bornee
 # --- Modeles Gemini ---
 CHAT_MODEL = "gemini-3.5-flash-lite"
 EMBEDDING_MODEL = "gemini-embedding-2"
+# Dimension des vecteurs produite par EMBEDDING_MODEL : doit correspondre
+# exactement au vector(3072) de la colonne document_chunks.embedding.
+EMBEDDING_DIMENSIONS = 3072
 
 
 def configurer_logging(niveau=logging.INFO):

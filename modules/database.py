@@ -21,14 +21,23 @@ def init_connection():
 def get_chat_history(supabase_client, session_id):
     """
     Récupère l'historique des messages pour une session donnée.
+
+    Une base injoignable ne doit pas empêcher le démarrage de l'application :
+    on journalise l'échec et on renvoie une liste vide (historique vide).
     """
-    reponse_db = (
-        supabase_client.table("chat_history")
-        .select("*")
-        .eq("session_id", session_id)
-        .order("created_at")
-        .execute()
-    )
+    try:
+        reponse_db = (
+            supabase_client.table("chat_history")
+            .select("*")
+            .eq("session_id", session_id)
+            .order("created_at")
+            .execute()
+        )
+    except Exception as erreur:
+        logger.error(
+            "Historique illisible pour la session %s : %s", session_id, erreur
+        )
+        return []
     return reponse_db.data
 
 

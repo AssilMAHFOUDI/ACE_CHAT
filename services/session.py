@@ -12,6 +12,10 @@ from modules.database import (
 
 logger = logging.getLogger(__name__)
 
+# Rôles admis en base : l'app n'écrit que "user" et "assistant", "model"
+# accepte les anciennes lignes écrites au format Gemini.
+ROLES_VALIDES = {"user", "assistant", "model"}
+
 
 def nouvel_identifiant():
     """Genere un nouvel identifiant de session (UUID v4)."""
@@ -24,6 +28,7 @@ def charger_historique(supabase_client, session_id):
     return [
         {"role": ligne["role"], "content": ligne["content"]}
         for ligne in historique
+        if ligne.get("role") in ROLES_VALIDES
     ]
 
 
