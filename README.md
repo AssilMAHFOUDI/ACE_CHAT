@@ -235,8 +235,48 @@ $$;
 > Returning `file_name` feeds the `[Extrait de <fichier>]` labels, the `📎 Sources` line and that fallback filtering.
 >
 > If the five-parameter call still answers `PGRST202` right after running the block, the PostgREST schema cache is stale: reload it with `notify pgrst, 'reload schema';` (or *Project Settings → API → Reload* in the Supabase dashboard) and retry.
->
-> Returning `file_name` is what feeds the `[Extrait de <fichier>]` labels and the `📎 Sources` line. Without the migration the app still answers (session-only search) but shows no source.
+
+#### Verify the document filter (reads your data, writes nothing)
+
+This test targets a session that holds **several** documents automatically — with a single-document session, both queries trivially return the same thing:
+
+```sql
+-- A) whole session : several file_name values expected
+select file_name, count(*) as chunks
+from match_document_chunks(
+  (select embedding from document_chunks
+    where session_id = (select session_id from document_chunks
+                        group by session_id having count(distinct file_name) > 1
+                        order by min(id) limit 1)),
+  -1.0, 50,
+  (select session_id from document_chunks
+    where session_id = (select session_id from document_chunks
+                        group by session_id having count(distinct file_name) > 1
+                        order by min(id) limit 1)),
+  null)
+group by file_name order by file_name;
+
+-- B) one document only : a single file_name expected (the one passed)
+select file_name, count(*) as chunks
+from match_document_chunks(
+  (select embedding from document_chunks
+    where session_id = (select session_id from document_chunks
+                        group by session_id having count(distinct file_name) > 1
+                        order by min(id) limit 1)),
+  -1.0, 50,
+  (select session_id from document_chunks
+    where session_id = (select session_id from document_chunks
+                        group by session_id having count(distinct file_name) > 1
+                        order by min(id) limit 1)),
+  (select file_name from document_chunks
+    where session_id = (select session_id from document_chunks
+                        group by session_id having count(distinct file_name) > 1
+                        order by min(id) limit 1)
+    order by file_name limit 1))
+group by file_name order by file_name;
+```
+
+If the five-parameter call returns `PGRST202` here too, re-run the migration block above.
 
 ---
 
