@@ -2,23 +2,23 @@
 app.py: Streamlit entry point for ACE CHAT (UI only; logic lives in modules/ and services/)
 """
 
-import streamlit as st
 import logging
 
-# --- IMPORTATION DE NOS NOUVEAUX MODULES ---
+import streamlit as st
 
+# --- IMPORTATION DE NOS NOUVEAUX MODULES ---
 from modules.ai_engine import (
     format_history_for_gemini,
     get_ai_response,
     init_ai_client,
 )
-from modules.database import init_connection
 from modules.config import configurer_logging
+from modules.database import init_connection
 from services.base_connaissance import (
+    document_deja_indexe,
     documents_indexes,
     indexer_document,
     supprimer_document,
-    document_deja_indexe,
 )
 from services.recherche import (
     chercher_passages,
@@ -32,7 +32,6 @@ from services.session import (
     nouvel_identifiant,
     reinitialiser_session,
 )
-
 
 # On force Python à afficher les logs INFO dans le terminal
 configurer_logging()

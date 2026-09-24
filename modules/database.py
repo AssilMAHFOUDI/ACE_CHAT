@@ -34,9 +34,7 @@ def get_chat_history(supabase_client, session_id):
             .execute()
         )
     except Exception as erreur:
-        logger.error(
-            "Historique illisible pour la session %s : %s", session_id, erreur
-        )
+        logger.error("Historique illisible pour la session %s : %s", session_id, erreur)
         return []
     return reponse_db.data
 
@@ -72,7 +70,14 @@ def filtre_document_disponible():
     return _filtre_document_par_sql["disponible"]
 
 
-def search_relevant_chunks(supabase_client, query_embedding, session_id, file_name=None, match_threshold=MATCH_THRESHOLD, match_count=MATCH_COUNT):
+def search_relevant_chunks(
+    supabase_client,
+    query_embedding,
+    session_id,
+    file_name=None,
+    match_threshold=MATCH_THRESHOLD,
+    match_count=MATCH_COUNT,
+):
     """
     Appelle la fonction SQL Supabase pour trouver les morceaux de documents
     les plus proches sémantiquement de la question, filtrés par session_id.
@@ -95,9 +100,7 @@ def search_relevant_chunks(supabase_client, query_embedding, session_id, file_na
         if file_name:
             parametres["p_file_name"] = file_name
 
-        response = supabase_client.rpc(
-            "match_document_chunks", parametres
-        ).execute()
+        response = supabase_client.rpc("match_document_chunks", parametres).execute()
 
         if file_name:
             # Le filtre par document est bien pris en charge par la base
@@ -112,7 +115,7 @@ def search_relevant_chunks(supabase_client, query_embedding, session_id, file_na
             # et pour respecter malgré tout le document choisi par l'utilisateur.
             _filtre_document_par_sql["disponible"] = False
             logger.warning(
-               "⚠️ Filtre par document indisponible côté base : la fonction SQL "
+                "⚠️ Filtre par document indisponible côté base : la fonction SQL "
                 "match_document_chunks n'accepte pas encore p_file_name. "
                 "Exécute la migration SQL du README. Filtrage côté application."
             )
@@ -153,7 +156,7 @@ def list_session_documents(supabase_client, session_id):
         )
     except Exception as e:
         logger.error(
-           "❌ Impossible de lister les documents de la session %s : %s",
+            "❌ Impossible de lister les documents de la session %s : %s",
             session_id[:8],
             e,
         )
@@ -193,14 +196,14 @@ def clear_document_chunks(supabase_client, session_id, file_name=None):
             requete = requete.eq("file_name", file_name)
         requete.execute()
         logger.info(
-           "🧹 Chunks supprimés pour la session %s%s",
+            "🧹 Chunks supprimés pour la session %s%s",
             session_id[:8],
             f" (document {file_name})" if file_name else "",
         )
         return True
     except Exception as e:
         logger.error(
-           "❌ Erreur lors de la suppression des chunks (session %s) : %s",
+            "❌ Erreur lors de la suppression des chunks (session %s) : %s",
             session_id[:8],
             e,
         )

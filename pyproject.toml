@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ace-chat"
+version = "8.0.0"
+description = "Assistant conversationnel intelligent propuls? par Streamlit, Gemini et Supabase (RAG & Agent ReAct)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "streamlit==1.63.0",
+    "google-genai==2.23.0",
+    "pypdf>=6.0.0",
+    "supabase>=2.3.0",
+    "ddgs==9.16.0",
+    "simpleeval==0.9.13",
+    "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.1.1",
+    "pytest-cov==7.1.0",
+    "ruff==0.16.8",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort (tri des imports)
+    "B",   # flake8-bugbear (bugs courants)
+    "UP",  # pyupgrade (syntaxe moderne Python 3.10+)
+]
+ignore = [
+    "E501",  # line too long (g?r? automatiquement par le formateur)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["modules", "services", "models"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = [
+    "--cov=modules",
+    "--cov=services",
+    "--cov=models",
+    "--cov-report=term-missing",
+    "--cov-report=html:tests/htmlcov",
+]
+
+[tool.coverage.run]
+source = ["modules", "services", "models"]
+
+[tool.coverage.html]
+directory = "tests/htmlcov"
+title = "ACE CHAT ? Couverture"

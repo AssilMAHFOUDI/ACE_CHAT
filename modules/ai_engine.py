@@ -1,7 +1,9 @@
-import logging
 import datetime
+import logging
+
 from google import genai
 from google.genai import types
+
 from modules.config import CHAT_MODEL, EMBEDDING_MODEL, MAX_ITERATIONS
 from modules.tools import calculatrice, meteo, recherche_web
 
@@ -87,7 +89,7 @@ def get_ai_response(client, gemini_history, status_callback=None):
                         status_callback(f"🛠️ Utilisation de l'outil : `{tool_name}`")
 
                 logger.info(
-                   f"🛠️  L'Agent décide d'utiliser : {tool_name} avec les arguments : {tool_args}"
+                    f"🛠️  L'Agent décide d'utiliser : {tool_name} avec les arguments : {tool_args}"
                 )
 
                 if tool_name in AVAILABLE_TOOLS:
@@ -122,7 +124,7 @@ def get_ai_response(client, gemini_history, status_callback=None):
 
 def generate_rag_prompt(relevant_chunks, user_question):
     """
-    Crée un prompt enrichi en combinant uniquement les extraits pertinents 
+    Crée un prompt enrichi en combinant uniquement les extraits pertinents
     trouvés dans la base de données et la question de l'utilisateur.
     """
     # On étiquette chaque extrait avec son document source : la session peut
@@ -133,9 +135,9 @@ def generate_rag_prompt(relevant_chunks, user_question):
         entete = f"[Extrait de {source}]" if source else "[Extrait]"
         blocs.append(f"{entete}\n{chunk['content']}")
     context = "\n\n".join(blocs)
-    
+
     prompt = f"""
-    Tu es un assistant IA professionnel. Tu dois répondre à la question de l'utilisateur en te basant **uniquement** sur le contexte fourni ci-dessous. 
+    Tu es un assistant IA professionnel. Tu dois répondre à la question de l'utilisateur en te basant **uniquement** sur le contexte fourni ci-dessous.
     Si la réponse ne se trouve pas dans le contexte, dis honnêtement que tu ne sais pas, n'invente rien.
     Quand plusieurs documents sont fournis, précise de quel extrait provient l'information.
 
@@ -147,9 +149,10 @@ def generate_rag_prompt(relevant_chunks, user_question):
     """
     return prompt
 
+
 def get_embedding(text, client):
     """
-    Transforme un texte en vecteur (embedding) de 3072 dimensions 
+    Transforme un texte en vecteur (embedding) de 3072 dimensions
     en utilisant le modèle d'embedding de Gemini.
     """
     return get_embeddings([text], client)[0]
@@ -172,12 +175,10 @@ def get_embeddings(texts, client, batch_size=20):
     """
     vectors = []
     for start in range(0, len(texts), batch_size):
-        batch = texts[start:start + batch_size]
+        batch = texts[start : start + batch_size]
         response = client.models.embed_content(
             model=EMBEDDING_MODEL,
-            contents=[
-                types.Content(parts=[types.Part(text=text)]) for text in batch
-            ]
+            contents=[types.Content(parts=[types.Part(text=text)]) for text in batch],
         )
         if len(response.embeddings) != len(batch):
             # Sécurité : sans alignement, on associerait un vecteur au mauvais

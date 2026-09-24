@@ -80,3 +80,14 @@ def test_filtre_applique_par_base_apres_repli(supabase, ia):
     supabase.gestionnaire_rpc = base_non_migree
     chercher_passages("q", "s1", supabase, ia, file_name="a.pdf")
     assert filtre_applique_par_base() is False
+
+
+def test_chercher_passages_ignore_chunks_corrompus(supabase, ia):
+    # Un chunk sans content (invalide pour DocumentChunk) est ignor? sans planter
+    supabase.resultats_rpc["match_document_chunks"] = [
+        {"id": 1, "file_name": "valide.pdf", "content": "OK"},
+        {"id": 2, "file_name": "corrompu.pdf"},  # manque 'content'
+    ]
+    res = chercher_passages("q", "s1", supabase, ia)
+    assert len(res) == 1
+    assert res[0]["file_name"] == "valide.pdf"

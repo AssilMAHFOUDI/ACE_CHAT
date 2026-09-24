@@ -1,13 +1,12 @@
-import logging
-import urllib.request
-import urllib.parse
 import json
+import logging
+import urllib.parse
+import urllib.request
 
 from ddgs import DDGS
-from simpleeval import simple_eval, InvalidExpression
+from simpleeval import InvalidExpression, simple_eval
 
 logger = logging.getLogger(__name__)
-
 
 
 def calculatrice(expression: str) -> str:
@@ -18,11 +17,11 @@ def calculatrice(expression: str) -> str:
     try:
         # Nettoyage basique de l'expression
         expression = expression.strip()
-        
+
         # Évaluation sécurisée
         resultat = simple_eval(expression)
         return str(resultat)
-        
+
     except (InvalidExpression, ZeroDivisionError, SyntaxError, TypeError) as e:
         return f"Erreur de calcul : Expression invalide ou non supportée ({e})"
     except Exception as e:
@@ -56,8 +55,6 @@ def recherche_web(requete: str) -> str:
     except Exception as e:
         logger.error(f"Erreur lors de la recherche web pour {requete} : {e}")
         return f"Désolé, je n'ai pas réussi à faire la recherche sur Internet pour {requete}."
-
-
 
 
 def meteo(ville: str) -> str:
@@ -114,6 +111,6 @@ def meteo(ville: str) -> str:
 
     except Exception as e:
         logger.error(
-           f"❌ Erreur lors de la récupération de la météo pour {ville} : {e}"
+            f"❌ Erreur lors de la récupération de la météo pour {ville} : {e}"
         )
         return f"Désolé, je n'ai pas pu récupérer la météo pour {ville}."

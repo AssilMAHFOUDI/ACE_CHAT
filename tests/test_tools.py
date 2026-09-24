@@ -10,6 +10,7 @@ from modules.tools import calculatrice, meteo, recherche_web
 # Calculatrice (simpleeval, injections bloquées)
 # ---------------------------------------------------------------------------
 
+
 def test_calculatrice_operations():
     assert calculatrice("2 + 2") == "4"
     assert calculatrice("(45 * 12) / 3") == "180.0"
@@ -37,6 +38,7 @@ def test_calculatrice_injection_bloquee():
 # Recherche web (DDGS simulé)
 # ---------------------------------------------------------------------------
 
+
 class _FausseDDGS:
     resultats = []
 
@@ -45,10 +47,13 @@ class _FausseDDGS:
 
 
 def test_recherche_web_formate_les_resultats(monkeypatch):
-    _FausseDDGS.resultats = [{
-        "title": "Titre test", "body": "Resume du resultat",
-        "href": "https://exemple.fr",
-    }]
+    _FausseDDGS.resultats = [
+        {
+            "title": "Titre test",
+            "body": "Resume du resultat",
+            "href": "https://exemple.fr",
+        }
+    ]
     monkeypatch.setattr(outils, "DDGS", _FausseDDGS)
     sortie = recherche_web("actualité IA")
     assert "- Titre : Titre test" in sortie
@@ -75,8 +80,10 @@ def test_recherche_web_erreur_reseau(monkeypatch):
 # Météo (urlopen simulé : géocodage puis prévisions)
 # ---------------------------------------------------------------------------
 
+
 def _urlopen_factice(reponses):
     """reponses : {fragment d'URL: objet JSON}"""
+
     class _Reponse:
         def __init__(self, donnees):
             self._donnees = donnees
@@ -101,41 +108,69 @@ def _urlopen_factice(reponses):
 
 def test_meteo_resultat_complet(monkeypatch):
     monkeypatch.setattr(
-        urllib.request, "urlopen",
-        _urlopen_factice({
-            "geocoding-api": {"results": [{
-                "latitude": 48.85, "longitude": 2.35,
-                "name": "Paris", "country": "France"}]},
-            "api.open-meteo.com": {"current": {
-                "temperature_2m": 21.5, "relative_humidity_2m": 60,
-                "weather_code": 1}},
-        }),
+        urllib.request,
+        "urlopen",
+        _urlopen_factice(
+            {
+                "geocoding-api": {
+                    "results": [
+                        {
+                            "latitude": 48.85,
+                            "longitude": 2.35,
+                            "name": "Paris",
+                            "country": "France",
+                        }
+                    ]
+                },
+                "api.open-meteo.com": {
+                    "current": {
+                        "temperature_2m": 21.5,
+                        "relative_humidity_2m": 60,
+                        "weather_code": 1,
+                    }
+                },
+            }
+        ),
     )
     sortie = meteo("Paris")
     assert (
-        "Météo à Paris (France) : 21.5°C, Principalement dégagé. "
-        "Humidité : 60%."
+        "Météo à Paris (France) : 21.5°C, Principalement dégagé. Humidité : 60%."
     ) == sortie
 
 
 def test_meteo_code_inconnu(monkeypatch):
     monkeypatch.setattr(
-        urllib.request, "urlopen",
-        _urlopen_factice({
-            "geocoding-api": {"results": [{
-                "latitude": 1.0, "longitude": 2.0,
-                "name": "VilleX", "country": "PaysY"}]},
-            "api.open-meteo.com": {"current": {
-                "temperature_2m": 30.0, "relative_humidity_2m": 80,
-                "weather_code": 42}},
-        }),
+        urllib.request,
+        "urlopen",
+        _urlopen_factice(
+            {
+                "geocoding-api": {
+                    "results": [
+                        {
+                            "latitude": 1.0,
+                            "longitude": 2.0,
+                            "name": "VilleX",
+                            "country": "PaysY",
+                        }
+                    ]
+                },
+                "api.open-meteo.com": {
+                    "current": {
+                        "temperature_2m": 30.0,
+                        "relative_humidity_2m": 80,
+                        "weather_code": 42,
+                    }
+                },
+            }
+        ),
     )
     assert "Conditions variables" in meteo("VilleX")
 
 
 def test_meteo_ville_inconnue(monkeypatch):
     monkeypatch.setattr(
-        urllib.request, "urlopen",
+        urllib.request,
+        "urlopen",
         _urlopen_factice({"geocoding-api": {"results": []}}),
     )
     assert "Je n'ai pas trouvé la ville de 'Atlantis'." == meteo("Atlantis")

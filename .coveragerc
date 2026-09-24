@@ -1,8 +1,0 @@
-[run]
-source =
-    modules
-    services
-
-[html]
-directory = tests/htmlcov
-title = ACE CHAT · Couverture

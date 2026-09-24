@@ -82,12 +82,14 @@ def split_text_into_chunks(text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
 
         # On avance le curseur pour le prochain morceau,
         # en reculant de la valeur de l'overlap
-        start += (chunk_size - overlap)
+        start += chunk_size - overlap
 
     return chunks
 
 
-def process_and_store_document(text, file_name, session_id, supabase_client, ai_client, progress_callback=None):
+def process_and_store_document(
+    text, file_name, session_id, supabase_client, ai_client, progress_callback=None
+):
     """
     Orchestre le découpage, la vectorisation et la sauvegarde dans Supabase.
 
@@ -117,18 +119,20 @@ def process_and_store_document(text, file_name, session_id, supabase_client, ai_
         if len(chunk.strip()) >= CHUNK_MIN_LENGTH
     ]
     total = len(chunks)
-    logger.info("Découpage terminé : %s morceaux exploitables pour %s.", total, file_name)
+    logger.info(
+        "Découpage terminé : %s morceaux exploitables pour %s.", total, file_name
+    )
 
     if total == 0:
         logger.warning(
-           "⚠️ Aucun morceau exploitable dans %s : rien n'a été stocké.", file_name
+            "⚠️ Aucun morceau exploitable dans %s : rien n'a été stocké.", file_name
         )
         return 0
 
     # 2. On calcule les vecteurs par paquets (1 appel API pour N morceaux)
     vectors = []
     for start in range(0, total, EMBEDDING_BATCH_SIZE):
-        batch = chunks[start:start + EMBEDDING_BATCH_SIZE]
+        batch = chunks[start : start + EMBEDDING_BATCH_SIZE]
         vectors.extend(get_embeddings(batch, ai_client))
         if progress_callback:
             progress_callback(len(vectors), total)
@@ -149,15 +153,15 @@ def process_and_store_document(text, file_name, session_id, supabase_client, ai_
             "content": chunk,
             "embedding": vector,
         }
-        for chunk, vector in zip(chunks, vectors)
+        for chunk, vector in zip(chunks, vectors, strict=True)
     ]
     for start in range(0, len(rows), INSERT_BATCH_SIZE):
         supabase_client.table("document_chunks").insert(
-            rows[start:start + INSERT_BATCH_SIZE]
+            rows[start : start + INSERT_BATCH_SIZE]
         ).execute()
 
     logger.info(
-       "✅ %s morceaux vectorisés et sauvegardés dans Supabase pour %s.",
+        "✅ %s morceaux vectorisés et sauvegardés dans Supabase pour %s.",
         len(rows),
         file_name,
     )

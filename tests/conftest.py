@@ -27,6 +27,7 @@ sys.path.insert(0, str(RACINE))
 # Supabase simulé (même API que celle utilisée par modules/database.py)
 # ---------------------------------------------------------------------------
 
+
 class _Reponse:
     """Même forme que supabase-py : objet avec .data."""
 
@@ -66,14 +67,14 @@ class _Requete:
                 raise RuntimeError(f"echec simule : select {self._table}")
             lignes = self._selection()
             if self._ordre:
-                lignes = sorted(lignes, key=lambda l: l.get(self._ordre) or "")
-            return _Reponse([dict(l) for l in lignes])
+                lignes = sorted(lignes, key=lambda row: row.get(self._ordre) or "")
+            return _Reponse([dict(row) for row in lignes])
 
         if self._action == "insert":
             if self._table in self._supabase.echecs_insert:
                 raise RuntimeError(f"echec simule : insert {self._table}")
             self._supabase.tables.setdefault(self._table, []).extend(
-                dict(l) for l in self._payload
+                dict(row) for row in self._payload
             )
             self._supabase.journal.append(
                 ("insert", self._table, dict(self._filtres), list(self._payload))
@@ -139,7 +140,7 @@ class FakeSupabase:
 
     def __init__(self, tables=None, journal=None):
         self.tables = {
-            n: [dict(l) for l in lignes] for n, lignes in (tables or {}).items()
+            n: [dict(row) for row in lignes] for n, lignes in (tables or {}).items()
         }
         self.journal = journal if journal is not None else []
         self.appels_rpc = []
@@ -160,11 +161,12 @@ class FakeSupabase:
 # Client Gemini simulé (embeddings + chats ReAct)
 # ---------------------------------------------------------------------------
 
+
 class _ModeleEmbed:
     def __init__(self, journal):
         self._journal = journal
         self.nb_retourne = None  # force un mauvais alignement si fixé
-        self.erreur = None       # exception à lever (panne API simulée)
+        self.erreur = None  # exception à lever (panne API simulée)
 
     def embed_content(self, model, contents):
         if self.erreur is not None:
@@ -174,8 +176,7 @@ class _ModeleEmbed:
         nb = len(textes) if self.nb_retourne is None else self.nb_retourne
         return SimpleNamespace(
             embeddings=[
-                SimpleNamespace(values=[float(len(t)), 1.0, 2.0])
-                for t in textes[:nb]
+                SimpleNamespace(values=[float(len(t)), 1.0, 2.0]) for t in textes[:nb]
             ]
         )
 
@@ -192,10 +193,10 @@ class _Chat:
 
 class _Chats:
     def __init__(self):
-        self.reponses = []    # file des réponses du prochain chat
+        self.reponses = []  # file des réponses du prochain chat
         self.creation = None  # dernier appel create(model=, history=, config=)
 
-        self.dernier = None     # dernier chat créé (pour inspecter les envois)
+        self.dernier = None  # dernier chat créé (pour inspecter les envois)
 
     def create(self, model, history, config):
         self.creation = {"model": model, "history": history, "config": config}
@@ -215,6 +216,7 @@ class FakeIA:
 # ---------------------------------------------------------------------------
 # Briques de test partagées
 # ---------------------------------------------------------------------------
+
 
 def reponse_finale(texte):
     """Réponse de modèle sans appel d'outil (fin de la boucle ReAct)."""
@@ -250,6 +252,7 @@ def ia():
 def filtre_document_par_defaut():
     """Chaque test part du drapeau « la base sait filtrer » = True."""
     from modules.database import _filtre_document_par_sql
+
     _filtre_document_par_sql["disponible"] = True
     yield
     _filtre_document_par_sql["disponible"] = True
@@ -258,6 +261,7 @@ def filtre_document_par_defaut():
 # ---------------------------------------------------------------------------
 # Habillage automatique du rapport tests/htmlcov/ (thème sombre + marque)
 # ---------------------------------------------------------------------------
+
 
 def themer_htmlcov():
     """Applique le thème ACE CHAT à tests/htmlcov/ — idempotent (marqueurs)."""
@@ -275,7 +279,7 @@ def themer_htmlcov():
                 )
 
     script = (
-        '<script>/* ACE-CHAT-BRAND */\n'
+        "<script>/* ACE-CHAT-BRAND */\n"
         "(function(){var b=document.querySelector('body');"
         "if(b&&!document.querySelector('.ace-brand')){"
         "var d=document.createElement('div');d.className='ace-brand';"
@@ -309,4 +313,3 @@ def themer_htmlcov():
 
 # atexit tourne après l'écriture du rapport par pytest-cov : déterministe.
 atexit.register(themer_htmlcov)
-

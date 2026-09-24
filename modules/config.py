@@ -9,20 +9,20 @@ il reste testable sans Streamlit ni reseau.
 import logging
 
 # --- Decoupage des documents ---
-CHUNK_SIZE = 1000        # taille d un morceau de texte (caracteres)
-CHUNK_OVERLAP = 200      # chevauchement entre morceaux consecutifs
-CHUNK_MIN_LENGTH = 10    # morceaux plus courts sont ignores
+CHUNK_SIZE = 1000  # taille d un morceau de texte (caracteres)
+CHUNK_OVERLAP = 200  # chevauchement entre morceaux consecutifs
+CHUNK_MIN_LENGTH = 10  # morceaux plus courts sont ignores
 
 # --- Batching ---
-EMBEDDING_BATCH_SIZE = 20    # textes par requete d embedding
-INSERT_BATCH_SIZE = 50       # lignes par requete INSERT vers Supabase
+EMBEDDING_BATCH_SIZE = 20  # textes par requete d embedding
+INSERT_BATCH_SIZE = 50  # lignes par requete INSERT vers Supabase
 
 # --- Recherche semantique (RAG) ---
-MATCH_THRESHOLD = 0.3    # similarite cosinus minimale
-MATCH_COUNT = 4          # nombre d extraits remontes par question
+MATCH_THRESHOLD = 0.3  # similarite cosinus minimale
+MATCH_COUNT = 4  # nombre d extraits remontes par question
 
 # --- Agent (ReAct) ---
-MAX_ITERATIONS = 10      # boucle raison/act bornee
+MAX_ITERATIONS = 10  # boucle raison/act bornee
 
 # --- Modeles Gemini ---
 CHAT_MODEL = "gemini-3.5-flash-lite"

@@ -20,17 +20,30 @@ RETOUR_RPC = [
 # Historique
 # ---------------------------------------------------------------------------
 
+
 def test_historique_trie_par_date(supabase):
     supabase.tables["chat_history"] = [
-        {"session_id": "s1", "role": "user", "content": "2",
-         "created_at": "2026-01-02"},
-        {"session_id": "s1", "role": "assistant", "content": "1",
-         "created_at": "2026-01-01"},
-        {"session_id": "autre", "role": "user", "content": "X",
-         "created_at": "2026-01-03"},
+        {
+            "session_id": "s1",
+            "role": "user",
+            "content": "2",
+            "created_at": "2026-01-02",
+        },
+        {
+            "session_id": "s1",
+            "role": "assistant",
+            "content": "1",
+            "created_at": "2026-01-01",
+        },
+        {
+            "session_id": "autre",
+            "role": "user",
+            "content": "X",
+            "created_at": "2026-01-03",
+        },
     ]
     lignes = get_chat_history(supabase, "s1")
-    assert [l["content"] for l in lignes] == ["1", "2"]
+    assert [row["content"] for row in lignes] == ["1", "2"]
 
 
 def test_historique_table_absente_retourne_vide(supabase):
@@ -51,12 +64,13 @@ def test_effacement_historique_cible_la_session(supabase):
         {"session_id": "s2", "role": "user", "content": "b"},
     ]
     clear_chat_history(supabase, "s1")
-    assert [l["session_id"] for l in supabase.tables["chat_history"]] == ["s2"]
+    assert [row["session_id"] for row in supabase.tables["chat_history"]] == ["s2"]
 
 
 # ---------------------------------------------------------------------------
 # Documents
 # ---------------------------------------------------------------------------
+
 
 def test_liste_documents_compte_et_range(supabase):
     supabase.tables["document_chunks"] = [
@@ -86,8 +100,10 @@ def test_purge_document_ciblee(supabase):
         {"session_id": "s2", "file_name": "a.pdf"},
     ]
     assert clear_document_chunks(supabase, "s1", "a.pdf") is True
-    restants = [(l["session_id"], l["file_name"])
-                for l in supabase.tables["document_chunks"]]
+    restants = [
+        (row["session_id"], row["file_name"])
+        for row in supabase.tables["document_chunks"]
+    ]
     assert restants == [("s1", "b.pdf"), ("s2", "a.pdf")]
 
 
@@ -97,7 +113,7 @@ def test_purge_toute_la_session(supabase):
         {"session_id": "s2", "file_name": "b.pdf"},
     ]
     assert clear_document_chunks(supabase, "s1") is True
-    assert [l["session_id"] for l in supabase.tables["document_chunks"]] == ["s2"]
+    assert [row["session_id"] for row in supabase.tables["document_chunks"]] == ["s2"]
 
 
 def test_purge_echec_retourne_false(supabase):
@@ -108,6 +124,7 @@ def test_purge_echec_retourne_false(supabase):
 # ---------------------------------------------------------------------------
 # Recherche sémantique (RPC) + repli
 # ---------------------------------------------------------------------------
+
 
 def test_recherche_passe_le_filtre_document(supabase):
     supabase.resultats_rpc["match_document_chunks"] = RETOUR_RPC
@@ -132,12 +149,12 @@ def test_recherche_repli_filtre_cote_application(supabase):
 
     supabase.gestionnaire_rpc = base_non_migree
     res = search_relevant_chunks(supabase, [1.0], "s1", "a.pdf", match_count=4)
-    assert [r["file_name"] for r in res] == ["a.pdf"]   # document A uniquement
-    assert len(supabase.appels_rpc) == 2                 # 1er échoué, repli ok
+    assert [r["file_name"] for r in res] == ["a.pdf"]  # document A uniquement
+    assert len(supabase.appels_rpc) == 2  # 1er échoué, repli ok
     _, repli = supabase.appels_rpc[1]
     assert "p_file_name" not in repli
-    assert repli["match_count"] == 20                    # max(match_count * 5, 20)
-    assert filtre_document_disponible() is False         # drapeau baissé
+    assert repli["match_count"] == 20  # max(match_count * 5, 20)
+    assert filtre_document_disponible() is False  # drapeau baissé
 
 
 def test_recherche_repli_lignes_sans_nom_tronque(supabase):
@@ -150,17 +167,19 @@ def test_recherche_repli_lignes_sans_nom_tronque(supabase):
 
     supabase.gestionnaire_rpc = base_non_migree
     res = search_relevant_chunks(supabase, [1.0], "s1", "x.pdf", match_count=2)
-    assert res == [{"id": 1}, {"id": 2}]                 # tronqué à match_count
+    assert res == [{"id": 1}, {"id": 2}]  # tronqué à match_count
 
 
 def test_recherche_sans_filtre_renvoie_tout(supabase):
     """file_name=None : pas de repli, la RPC reçoit tout le résultat."""
     supabase.resultats_rpc["match_document_chunks"] = [
-        {"id": 1}, {"id": 2}, {"id": 3},
+        {"id": 1},
+        {"id": 2},
+        {"id": 3},
     ]
     res = search_relevant_chunks(supabase, [1.0], "s1", None, match_count=2)
-    assert res == [{"id": 1}, {"id": 2}, {"id": 3}]      # aucune troncature
-    assert len(supabase.appels_rpc) == 1                 # un seul appel
+    assert res == [{"id": 1}, {"id": 2}, {"id": 3}]  # aucune troncature
+    assert len(supabase.appels_rpc) == 1  # un seul appel
 
 
 def test_init_connection_utilise_les_secrets(monkeypatch):
@@ -174,7 +193,7 @@ def test_init_connection_utilise_les_secrets(monkeypatch):
     )
     monkeypatch.setattr(db, "st", faux_st)
     client = db.init_connection()
-    assert hasattr(client, "table")                   # vrai client supabase
+    assert hasattr(client, "table")  # vrai client supabase
 
 
 def test_recherche_erreur_generique_retourne_vide(supabase):

@@ -58,8 +58,12 @@ def test_indexation_remplace_uniquement_le_document_recharge():
         ai_client=ia,
     )
     assert n == 1
-    doc_a = [l for l in supabase.tables["document_chunks"] if l["file_name"] == "A.txt"]
-    doc_b = [l for l in supabase.tables["document_chunks"] if l["file_name"] == "B.txt"]
+    doc_a = [
+        row for row in supabase.tables["document_chunks"] if row["file_name"] == "A.txt"
+    ]
+    doc_b = [
+        row for row in supabase.tables["document_chunks"] if row["file_name"] == "B.txt"
+    ]
     assert len(doc_a) == 1 and "ANCIEN" not in doc_a[0]["content"]
     assert doc_b[0]["content"] == "B-INTACT"  # l'autre document, intact
     # Ordre critique : vectoriser PUIS purger AVANT d'écrire (jamais l'inverse).
@@ -101,9 +105,32 @@ def test_supprimer_document(supabase):
         {"session_id": "s1", "file_name": "b.pdf"},
     ]
     assert supprimer_document(supabase, "s1", "a.pdf") is True
-    assert [l["file_name"] for l in supabase.tables["document_chunks"]] == ["b.pdf"]
+    assert [row["file_name"] for row in supabase.tables["document_chunks"]] == ["b.pdf"]
 
 
 def test_supprimer_document_echec(supabase):
     supabase.echecs_delete.add("document_chunks")
     assert supprimer_document(supabase, "s1", "a.pdf") is False
+
+
+def test_documents_indexes_ignore_documents_corrompus(supabase):
+    # Un document avec chunks n?gatifs est ignor? par Pydantic
+    supabase.tables["document_chunks"] = [
+        {"session_id": "s1", "file_name": "bon.pdf"},
+    ]
+    docs = documents_indexes(supabase, "s1")
+    assert len(docs) == 1
+    assert docs[0]["file_name"] == "bon.pdf"
+
+
+def test_documents_indexes_ignore_elements_invalides(supabase, monkeypatch):
+    import modules.database as db
+
+    # On simule un retour de database contenant un ?l?ment qui n'a pas les bons types
+    monkeypatch.setattr(
+        db,
+        "list_session_documents",
+        lambda s, sid: [{"file_name": "x.pdf", "chunks": -5}],
+    )
+    docs = documents_indexes(supabase, "s1")
+    assert docs == []  # Rejet? par la validation ge=0 de DocumentSummary
