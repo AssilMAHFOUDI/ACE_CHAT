@@ -2,6 +2,9 @@
 
 **ACE CHAT** is an intelligent chat application built with **Streamlit** and powered by **Google Gemini**. It combines a conversational assistant, a **vector-based RAG** (Retrieval-Augmented Generation) document analysis mode, and a **ReAct agent loop** that can autonomously call external tools (web search, weather, calculator). Conversation history and document embeddings are persisted in **Supabase**.
 
+The codebase is layered (`app.py` -> `services/` -> `modules/`), validated by an
+automated test suite (87 tests, 99% coverage) and checked by **Ruff** in CI.
+
 ---
 
 ## Features
@@ -26,32 +29,54 @@
 
 ```
 ACE_CHAT/
-  app.py                        # Streamlit entry point (UI + orchestration)
-  requirements.txt              # Python dependencies
+  app.py                        # Streamlit entry point (pure UI: sidebar + chat)
+  pyproject.toml                # Packaging, Ruff, pytest and coverage configuration
+  requirements.txt              # Runtime dependencies
+  requirements-dev.txt          # Development dependencies (tests, linter)
   README.md
   .streamlit/
     secrets.toml                # API keys and credentials (not versioned)
   .devcontainer/
     devcontainer.json           # GitHub Codespaces / Dev Container config
+  .github/
+    workflows/ci.yml            # CI: Ruff + pytest with a 95% coverage gate
+  models/
+    schemas.py                  # Pydantic models validated on every Supabase read
   modules/
     __init__.py
-    config.py                   # centralised settings, logging setup, models
+    config.py                   # centralised settings, logging setup, model names
     ai_engine.py                # Gemini client, ReAct loop, embeddings, RAG prompt
     database.py                 # Supabase connection, history CRUD, vector search
     document_processor.py       # Text extraction, chunking, vectorization
     tools.py                    # Tools exposed to Gemini (web, weather, calc)
+  services/
+    session.py                  # Session id, chat history (load / save / reset)
+    base_connaissance.py        # Knowledge base: index, list and delete documents
+    recherche.py                # Question -> embedding -> search -> RAG prompt
+  tests/
+    conftest.py                 # In-memory fakes (Supabase, Gemini) and coverage theme
+    test_*.py                   # 87 unit and integration tests
+    htmlcov/                    # Generated coverage report (not versioned)
 ```
 
 ### Module responsibilities
 
 | Module | Responsibility |
 | --- | --- |
-| `app.py` | Streamlit UI, session management, orchestration, document ingestion trigger, live status boxes. |
-| `modules/ai_engine.py` | Gemini client init, history conversion, ReAct agent loop, tool dispatch, embeddings (`get_embedding`), RAG prompt generation. |
+| `app.py` | Streamlit UI only: sidebar (mode, knowledge base, search scope), chat flow, live status boxes, ingestion progress bar. Every business action is delegated to `services/`. |
+| `services/session.py` | Session identifier, chat history (load / save / reset) and role validation. |
+| `services/base_connaissance.py` | Knowledge base: list indexed documents, index a document (extract -> chunk -> embed -> replace), delete a single document. |
+| `services/recherche.py` | RAG search: embed the question, call the Supabase RPC, build the context prompt, extract the sources. |
+| `models/schemas.py` | Pydantic v2 models (`ChatMessage`, `DocumentSummary`, `DocumentChunk`) validating what comes back from Supabase. |
+| `modules/ai_engine.py` | Gemini client init, history conversion, ReAct agent loop, tool dispatch, embeddings (`get_embeddings`), RAG prompt generation. |
 | `modules/database.py` | Cached Supabase connection, chat history CRUD, document listing (`list_session_documents`), semantic chunk search (`search_relevant_chunks`), cleanup of one document or of the whole session (`clear_document_chunks`). |
 | `modules/document_processor.py` | Extract text (`.txt` / `.pdf`), split into overlapping chunks, embed and store each chunk. |
-| `modules/config.py` | Centralised constants (chunking, batching, RAG thresholds, Gemini models) and logging setup. |
+| `modules/config.py` | Centralised constants (chunking, batching, RAG thresholds, Gemini models, embedding dimensions) and logging setup. |
 | `modules/tools.py` | `recherche_web`, `meteo`, and `calculatrice` functions callable by Gemini. |
+
+The dependency direction is one-way: `app.py` (presentation) calls `services/` (business
+logic), which calls `modules/` (infrastructure). A service never imports Streamlit, so the
+same logic could be reused by a CLI or an API without modification.
 
 ---
 
@@ -59,7 +84,7 @@ ACE_CHAT/
 
 `get_ai_response()` in `modules/ai_engine.py` implements a **ReAct (Reason + Act)** loop:
 
-1. The latest user message is sent to a Gemini chat session (`client.chats.create`), which keeps state across turns.
+1. The conversation history stored in Supabase plus the latest user message are sent to a fresh Gemini chat session (`client.chats.create`), so the context is rebuilt on every turn instead of relying on server-side state.
 2. If the model returns `function_calls`, the requested tools are executed and their results are sent back to the model as function responses (`types.Part.from_function_response`).
 3. The loop repeats (up to `max_iterations = 10`) until the model returns a plain text answer.
 4. A `status_callback` reports each reasoning step and tool call to the Streamlit UI (`st.status`).
@@ -106,13 +131,16 @@ This is a genuine retrieval pipeline (embeddings + similarity search), not promp
 
 ## Tech Stack
 
-- **Python 3.11+**
+- **Python 3.10+**
 - **Streamlit** - Web interface
 - **Google GenAI SDK** (`google-genai`) - Chat model `gemini-3.5-flash-lite`, embedding model `gemini-embedding-2`
 - **Supabase** - PostgreSQL + `pgvector` for history and document chunks
+- **Pydantic v2** - Validation of the data read from Supabase
 - **pypdf** - PDF text extraction
 - **ddgs** - DuckDuckGo web search
 - **Open-Meteo API** - Weather data (no API key required)
+- **Ruff** - Linting and formatting (development only)
+- **pytest + pytest-cov** - Test suite and coverage (development only)
 
 ---
 
@@ -128,17 +156,25 @@ cd ACE_CHAT
 ### 2. Create a virtual environment (recommended)
 
 ```bash
-python -m venv .venv
+python -m venv venv
 # Windows
-.venv\Scripts\activate
+venv\Scripts\activate
 # macOS / Linux
-source .venv/bin/activate
+source venv/bin/activate
 ```
 
 ### 3. Install dependencies
 
 ```bash
 pip install -r requirements.txt
+```
+
+### 4. Install the development dependencies (optional)
+
+Only required to run the test suite and the linter:
+
+```bash
+pip install -r requirements-dev.txt
 ```
 
 ---
@@ -296,6 +332,34 @@ The project includes a `.devcontainer` configuration. In a Codespace, the app st
 
 ---
 
+## Testing and Code Quality
+
+The project ships with an automated test suite (**87 tests**) covering `modules/`,
+`services/` and `models/`, at **99% line coverage**.
+
+```bash
+python -m pytest
+```
+
+- Tests run **offline**: Supabase and Gemini are replaced by in-memory fakes defined in
+  `tests/conftest.py`, so the suite needs no API key and no network access.
+- Coverage and the HTML report are configured in `pyproject.toml`; the report is written to
+  `tests/htmlcov/index.html` (custom dark theme in `tests/_theme_htmlcov.css`).
+- Linting and formatting use **Ruff** (88 columns):
+
+```bash
+ruff check .            # static analysis: pycodestyle, pyflakes, isort, bugbear, pyupgrade
+ruff format .           # formatting
+```
+
+- **Continuous integration**: `.github/workflows/ci.yml` runs `ruff check .`,
+  `ruff format --check .` and `python -m pytest --cov-fail-under=95` on every push to
+  `main` or `feature/*` and on every pull request.
+
+`app.py` (the Streamlit layer) is outside the coverage scope and is verified manually.
+
+---
+
 ## Usage
 
 1. **Choose a mode** in the sidebar:
@@ -322,17 +386,35 @@ The project includes a `.devcontainer` configuration. In a Codespace, the app st
 ## Security
 
 - Secrets (`GEMINI_API_KEY`, Supabase credentials) are stored in `.streamlit/secrets.toml`, excluded from version control.
-- The `calculatrice` function evaluates expressions via `eval` with `__builtins__` disabled. **This is not a fully safe sandbox** - for production, consider a dedicated expression library such as `simpleeval` or `numexpr`.
+- The `calculatrice` tool evaluates expressions with **`simpleeval`**, a restricted evaluator: built-ins, imports and dunder attribute access are unavailable, so an injection attempt such as `__import__("os").system("...")` is rejected with an error instead of being executed.
 
 ---
 
 ## Possible Improvements
 
-- Secure the calculator with a dedicated expression evaluator.
-- Re-index a document without deleting it first (today: remove it with 🗑️, then upload it again).
-- Add HTTP timeouts to network tools (`tools.py`).
-- Bound/trim the conversation history sent to Gemini.
+- Add timeouts and retries to the network tools (`tools.py`).
+- Bound or trim the conversation history sent to Gemini, which currently grows with the session.
+- Handle scanned (image-only) PDFs, where text extraction returns nothing: OCR (page rendering + a vision model) would cover them.
+- Stream the answer token by token (`st.write_stream`) instead of waiting for the full response.
+- Cover the Streamlit layer (`app.py`) with integration tests: it is currently outside the coverage scope.
 - Introduce explicit planning and self-critique to strengthen the agent's autonomy.
+
+---
+
+## Version History
+
+| Tag | Highlights |
+| --- | --- |
+| `v8.0.0` | Knowledge base with several documents per session: per-document cleanup, search scope selector, sources under the answer, SQL filter by document, single-read file handling, answers in the language of the question, batched ingestion, Pydantic schemas, `services/` layer, 87 tests and CI |
+| `v7.0.1` | Calculator hardened with `simpleeval` |
+| `v7.0.0` | Chunking and Gemini embeddings, vector search in Supabase |
+| `v6.0.0` | Agent version: ReAct loop with function calling |
+| `v5.0.0` | Function calling: web search, weather, calculator |
+| `v4.0.0` | Cloud persistence with Supabase, refactor into `modules/` |
+| `v3.1.0` | PDF support for document analysis |
+| `v3.0.0` | Document analysis (RAG) with memory |
+| `v2.0.0` | Conversation history |
+| `v1.0.0` | First release (Amnesia version) |
 
 ---
 
