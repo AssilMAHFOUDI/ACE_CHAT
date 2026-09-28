@@ -4,6 +4,7 @@ import json
 import urllib.request
 
 import modules.tools as outils
+from modules.config import TOOL_NETWORK_TIMEOUT
 from modules.tools import calculatrice, meteo, recherche_web
 
 # ---------------------------------------------------------------------------
@@ -41,6 +42,9 @@ def test_calculatrice_injection_bloquee():
 
 class _FausseDDGS:
     resultats = []
+
+    def __init__(self, *args, **kwargs):
+        pass
 
     def text(self, requete, max_results=5):
         return iter(self.resultats)
@@ -82,7 +86,12 @@ def test_recherche_web_erreur_reseau(monkeypatch):
 
 
 def _urlopen_factice(reponses):
-    """reponses : {fragment d'URL: objet JSON}"""
+    """reponses : {fragment d'URL: objet JSON}
+
+    Le faux accepte les memes arguments que `urllib.request.urlopen` (dont le
+    mot-cle `timeout=`) et consigne les timeouts recus dans
+    `_ouvrir.timeouts`, ce qui permet de verifier qu'ils sont bien transmis.
+    """
 
     class _Reponse:
         def __init__(self, donnees):
@@ -97,12 +106,14 @@ def _urlopen_factice(reponses):
         def read(self):
             return json.dumps(self._donnees).encode()
 
-    def _ouvrir(url):
+    def _ouvrir(url, *args, **kwargs):
+        _ouvrir.timeouts.append(kwargs.get("timeout"))
         for fragment, donnees in reponses.items():
             if fragment in url:
                 return _Reponse(donnees)
         raise AssertionError(f"URL inattendue : {url}")
 
+    _ouvrir.timeouts = []
     return _ouvrir
 
 
@@ -191,8 +202,79 @@ def test_calculatrice_erreur_inattendue(monkeypatch):
 
 
 def test_meteo_erreur_reseau(monkeypatch):
-    def _ko(url):
+    def _ko(url, *args, **kwargs):
         raise OSError("pas de reseau")
 
     monkeypatch.setattr(urllib.request, "urlopen", _ko)
     assert "Désolé, je n'ai pas pu récupérer la météo pour Paris." == meteo("Paris")
+
+
+# ---------------------------------------------------------------------------
+# Timeouts reseau (Phase A : ne jamais bloquer l'agent indefiniment)
+# ---------------------------------------------------------------------------
+
+
+def test_recherche_web_transmet_le_timeout(monkeypatch):
+    timeouts = []
+
+    class _DDGS:
+        def __init__(self, *args, **kwargs):
+            timeouts.append(kwargs.get("timeout"))
+
+        def text(self, requete, max_results=5):
+            return iter([])
+
+    monkeypatch.setattr(outils, "DDGS", _DDGS)
+    recherche_web("test timeout")
+    assert timeouts == [TOOL_NETWORK_TIMEOUT]
+
+
+def test_recherche_web_timeout_renvoie_message_dedie(monkeypatch):
+    class _DDGS:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def text(self, requete, max_results=5):
+            raise TimeoutError("trop long")
+
+    monkeypatch.setattr(outils, "DDGS", _DDGS)
+    sortie = recherche_web("test timeout")
+    assert "Délai d'attente dépassé (timeout)" in sortie
+
+
+def test_meteo_transmet_le_timeout_sur_chaque_appel(monkeypatch):
+    faux = _urlopen_factice(
+        {
+            "geocoding-api": {
+                "results": [
+                    {
+                        "latitude": 48.85,
+                        "longitude": 2.35,
+                        "name": "Paris",
+                        "country": "France",
+                    }
+                ]
+            },
+            "api.open-meteo.com": {
+                "current": {
+                    "temperature_2m": 20.0,
+                    "relative_humidity_2m": 50,
+                    "weather_code": 0,
+                }
+            },
+        }
+    )
+    monkeypatch.setattr(urllib.request, "urlopen", faux)
+    meteo("Paris")
+    # Geocodage puis previsions : les deux appels sont bornes.
+    assert faux.timeouts == [TOOL_NETWORK_TIMEOUT, TOOL_NETWORK_TIMEOUT]
+
+
+def test_meteo_timeout_renvoie_message_dedie(monkeypatch):
+    def _timeout(url, *args, **kwargs):
+        raise TimeoutError("trop long")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _timeout)
+    assert "Délai d'attente dépassé (timeout) pour le service météo (Paris)." == meteo(
+        "Paris"
+    )

@@ -184,10 +184,12 @@ class _ModeleEmbed:
 class _Chat:
     def __init__(self, reponses):
         self._reponses = list(reponses)
+        self.configs = []  # config passee a chaque send_message (None si absente)
         self.envoyes = []  # chaque message passé à send_message
 
-    def send_message(self, message):
+    def send_message(self, message, config=None):
         self.envoyes.append(message)
+        self.configs.append(config)
         return self._reponses.pop(0)
 
 

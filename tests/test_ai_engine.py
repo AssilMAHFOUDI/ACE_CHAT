@@ -11,7 +11,7 @@ from modules.ai_engine import (
     get_embeddings,
     init_ai_client,
 )
-from modules.config import CHAT_MODEL, MAX_ITERATIONS
+from modules.config import CHAT_MODEL, MAX_ITERATIONS, OBSERVATIONS_MAX_CHARS
 from tests.conftest import reponse_finale, reponse_outil
 
 
@@ -150,12 +150,104 @@ def test_statuts_des_outils_reseau_avec_outils_factice(monkeypatch, ia):
     assert any("Consultation de la météo" in s for s in statuts)
 
 
-def test_boucle_bornee_sans_reponse_finale(ia):
+def test_boucle_bornee_forcage_de_synthese_finale(ia):
+    # Le modele demande un outil a chaque tour sans jamais conclure : au dernier
+    # tour autorise, la boucle doit forcer une synthese au lieu de relancer un
+    # outil (avant : abandon sec apres 10 appels).
+    ia.chats.reponses = [
+        reponse_outil("calculatrice", {"expression": "1+1"})
+        for _ in range(MAX_ITERATIONS)
+    ] + [reponse_finale("Synthese partielle : 1+1 fait 2.")]
+    statuts = []
+    texte = get_ai_response(ia, _histoire(), status_callback=statuts.append)
+    assert "Synthese partielle : 1+1 fait 2." in texte
+    assert "limite de recherche" in texte
+    assert any("Limite de recherche atteinte" in s for s in statuts)
+    # MAX_ITERATIONS envois + 1 envoi de synthese forcee : la boucle est bornee.
+    assert len(ia.chats.dernier.envoyes) == MAX_ITERATIONS + 1
+
+
+def test_synthese_forcee_desactive_les_outils(ia):
+    ia.chats.reponses = [
+        reponse_outil("calculatrice", {"expression": "1+1"})
+        for _ in range(MAX_ITERATIONS)
+    ] + [reponse_finale("Voila.")]
+    get_ai_response(ia, _histoire())
+    config = ia.chats.dernier.configs[-1]
+    # L'appel de synthese interdit tout nouvel appel d'outil au modele.
+    assert config is engine.CONFIG_SANS_OUTILS
+    mode = config.tool_config.function_calling_config.mode
+    assert getattr(mode, "value", mode) == "NONE"
+    # Les tours precedents, eux, gardent les outils disponibles.
+    assert ia.chats.dernier.configs[0] is None
+
+
+def test_synthese_forcee_sans_texte_renvoie_repli(ia):
+    ia.chats.reponses = [
+        reponse_outil("calculatrice", {"expression": "1+1"})
+        for _ in range(MAX_ITERATIONS)
+    ] + [reponse_finale("")]  # synthese vide : on retombe sur le repli
+    texte = get_ai_response(ia, _histoire())
+    assert "Je n'ai pas pu finaliser" in texte
+
+
+def test_synthese_forcee_en_echec_renvoie_repli(ia):
+    # Aucune reponse en reserve pour l'appel de synthese : il leve, et l'agent
+    # doit malgre tout repondre quelque chose au lieu de propager l'erreur.
     ia.chats.reponses = [
         reponse_outil("calculatrice", {"expression": "1+1"})
         for _ in range(MAX_ITERATIONS)
     ]
-    texte = get_ai_response(ia, _histoire())  # sans status_callback
+    texte = get_ai_response(ia, _histoire())
+    assert "Je n'ai pas pu finaliser" in texte
+    assert len(ia.chats.dernier.envoyes) == MAX_ITERATIONS + 1
+
+
+def test_boucle_desactivee_renvoie_message_dedie(monkeypatch, ia):
+    # Cas limite : aucune iteration autorisee. On doit renvoyer le message de
+    # repli sans jamais envoyer de message au modele.
+    monkeypatch.setattr(engine, "MAX_ITERATIONS", 0)
+    texte = get_ai_response(ia, _histoire())
     assert "trop complexe" in texte
-    # Un envoi par itération, pas d'appel infini.
-    assert len(ia.chats.dernier.envoyes) == MAX_ITERATIONS
+    assert ia.chats.dernier.envoyes == []
+
+
+def test_reponse_finale_vide_relance_le_modele(ia):
+    # Sortie vide (ni texte ni outil) : on relance le modele au lieu de renvoyer
+    # None a l'interface.
+    ia.chats.reponses = [reponse_finale(""), reponse_finale("Voici la reponse.")]
+    texte = get_ai_response(ia, _histoire())
+    assert texte == "Voici la reponse."
+    assert len(ia.chats.dernier.envoyes) == 2
+
+
+# --- Synthese forcee : rappel des observations ------------------------------
+
+
+def test_formater_observations_vide():
+    assert engine._formater_observations([]) == ""
+
+
+def test_formater_observations_tronque_les_plus_anciennes():
+    # Rappel borne a OBSERVATIONS_MAX_CHARS : les observations recentes sont
+    # gardees, la troncature est signalee au modele.
+    observations = ["ancienne" * 200, "moyenne" * 200, "recente" * 200]
+    rappel = engine._formater_observations(observations)
+    assert "recente" * 200 in rappel
+    assert "tronquées" in rappel
+    assert "ancienne" * 200 not in rappel
+    assert "moyenne" * 200 not in rappel
+    assert len(rappel) <= OBSERVATIONS_MAX_CHARS + 120  # marge = marqueur
+
+
+def test_synthese_forcee_rappelle_les_observations(ia):
+    # Les resultats deja obtenus sont reinjectes dans le message de synthese :
+    # l'agent peut conclure meme si l'historique de session est volumineux.
+    ia.chats.reponses = [
+        reponse_outil("calculatrice", {"expression": "2 + 2"})
+        for _ in range(MAX_ITERATIONS)
+    ] + [reponse_finale("Synthese.")]
+    get_ai_response(ia, _histoire())
+    message_synthese = ia.chats.dernier.envoyes[-1]
+    assert "Observations" in message_synthese
+    assert "calculatrice" in message_synthese

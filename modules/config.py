@@ -23,6 +23,15 @@ MATCH_COUNT = 4  # nombre d extraits remontes par question
 
 # --- Agent (ReAct) ---
 MAX_ITERATIONS = 10  # boucle raison/act bornee
+# Taille maximale du rappel des observations injecte dans le message de
+# synthese forcee (fin de boucle) : borne la taille du prompt.
+OBSERVATIONS_MAX_CHARS = 2000
+
+# --- Outils & Reseau ---
+# Timeout en secondes applique a CHAQUE appel reseau : 1 pour la recherche web,
+# 2 pour la meteo (geocodage puis previsions), soit 20 s au pire.
+TOOL_NETWORK_TIMEOUT = 10
+
 
 # --- Modeles Gemini ---
 CHAT_MODEL = "gemini-3.5-flash-lite"

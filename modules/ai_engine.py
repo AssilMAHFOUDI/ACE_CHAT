@@ -4,7 +4,12 @@ import logging
 from google import genai
 from google.genai import types
 
-from modules.config import CHAT_MODEL, EMBEDDING_MODEL, MAX_ITERATIONS
+from modules.config import (
+    CHAT_MODEL,
+    EMBEDDING_MODEL,
+    MAX_ITERATIONS,
+    OBSERVATIONS_MAX_CHARS,
+)
 from modules.tools import calculatrice, meteo, recherche_web
 
 logger = logging.getLogger(__name__)
@@ -14,6 +19,39 @@ AVAILABLE_TOOLS = {
     "meteo": meteo,
     "recherche_web": recherche_web,
 }
+
+# Configuration utilisée pour l'appel de synthèse forcée en fin de boucle :
+# les outils y sont explicitement désactivés, de sorte que le modèle ne puisse
+# plus lancer de recherche et doive produire du texte.
+CONFIG_SANS_OUTILS = types.GenerateContentConfig(
+    tool_config=types.ToolConfig(
+        function_calling_config=types.FunctionCallingConfig(mode="NONE")
+    )
+)
+
+
+def _formater_observations(observations):
+    """
+    Résume les observations des outils pour le message de synthèse forcée.
+
+    Les observations les plus récentes sont conservées en priorité : le rappel
+    est tronqué à OBSERVATIONS_MAX_CHARS pour garder la main sur la taille du
+    prompt, et la troncature est signalée au modèle.
+    """
+    if not observations:
+        return ""
+
+    blocs = []
+    total = 0
+    for observation in reversed(observations):
+        if total + len(observation) > OBSERVATIONS_MAX_CHARS:
+            blocs.append("(... observations plus anciennes tronquées ...)")
+            break
+        blocs.append(observation)
+        total += len(observation)
+
+    blocs.reverse()
+    return "\n".join(blocs)
 
 
 def init_ai_client(api_key):
@@ -55,6 +93,7 @@ def get_ai_response(client, gemini_history, status_callback=None):
 
     current_message = latest_user_message
     max_iterations = MAX_ITERATIONS
+    observations = []  # résultats déjà obtenus des outils, réutilisés en synthèse
 
     for iteration in range(max_iterations):
         logger.info(f"ReAct Loop - Itération {iteration + 1}")
@@ -66,6 +105,47 @@ def get_ai_response(client, gemini_history, status_callback=None):
         response = chat_session.send_message(current_message)
 
         if response.function_calls:
+            # Si on atteint la dernière itération autorisée, on force l'agent à synthétiser
+            # au lieu de relancer des outils indéfiniment
+            if iteration == max_iterations - 1:
+                logger.warning(
+                    "Limite d'itérations atteinte (%d) : forçage de synthèse finale.",
+                    max_iterations,
+                )
+                if status_callback:
+                    status_callback(
+                        "⚠️ Limite de recherche atteinte : rédaction d'une synthèse avec les éléments disponibles..."
+                    )
+
+                message_forcage = (
+                    "Limite d'itérations atteinte. N'appelle plus aucun outil. "
+                    "Rédige immédiatement une synthèse claire et directe répondant au mieux "
+                    "à la question initiale de l'utilisateur à partir des éléments collectés jusqu'ici, "
+                    "en précisant les éventuelles incertitudes ou données manquantes."
+                )
+                rappel = _formater_observations(observations)
+                if rappel:
+                    message_forcage += (
+                        "\n\nObservations déjà collectées auprès des outils :\n"
+                        + rappel
+                    )
+                try:
+                    reponse_synthese = chat_session.send_message(
+                        message_forcage, config=CONFIG_SANS_OUTILS
+                    )
+                    if reponse_synthese.text:
+                        return (
+                            f"{reponse_synthese.text}\n\n"
+                            "*(Note : Cette réponse est une synthèse établie après avoir atteint la limite de recherche.)*"
+                        )
+                except Exception as err_synthese:
+                    logger.error("Échec de la synthèse forcée : %s", err_synthese)
+
+                return (
+                    "Je n'ai pas pu finaliser l'ensemble des étapes de recherche "
+                    "dans la limite impartie, mais voici ce qui a pu être identifié."
+                )
+
             tool_responses = []
             for function_call in response.function_calls:
                 tool_name = function_call.name
@@ -95,18 +175,21 @@ def get_ai_response(client, gemini_history, status_callback=None):
                 if tool_name in AVAILABLE_TOOLS:
                     try:
                         tool_result = AVAILABLE_TOOLS[tool_name](**tool_args)
+                        observations.append(f"{tool_name} → {tool_result}")
                         tool_responses.append(
                             types.Part.from_function_response(
                                 name=tool_name, response={"result": str(tool_result)}
                             )
                         )
                     except Exception as e:
+                        observations.append(f"{tool_name} → erreur : {e}")
                         tool_responses.append(
                             types.Part.from_function_response(
                                 name=tool_name, response={"error": str(e)}
                             )
                         )
                 else:
+                    observations.append(f"{tool_name} → outil inconnu")
                     tool_responses.append(
                         types.Part.from_function_response(
                             name=tool_name, response={"error": "Tool not found"}
@@ -114,10 +197,21 @@ def get_ai_response(client, gemini_history, status_callback=None):
                     )
             current_message = tool_responses
         else:
-            if status_callback:
-                status_callback("💬 Rédaction de la réponse finale...")
-            logger.info("L'Agent a terminé son raisonnement et fournit une réponse.")
-            return response.text
+            if response.text:
+                if status_callback:
+                    status_callback("💬 Rédaction de la réponse finale...")
+                logger.info(
+                    "L'Agent a terminé son raisonnement et fournit une réponse."
+                )
+                return response.text
+
+            # Réponse sans texte ni appel d'outil : on relance le modèle au lieu
+            # de renvoyer None à l'interface.
+            logger.warning("Réponse finale vide : relance du modèle.")
+            current_message = (
+                "Ta dernière réponse ne contenait aucun texte. "
+                "Rédige maintenant la réponse finale à la question initiale."
+            )
 
     return "Je suis désolé, le raisonnement était trop complexe et j'ai dû m'arrêter avant de trouver la réponse."
 

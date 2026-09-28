@@ -1,10 +1,13 @@
 import json
 import logging
+import urllib.error
 import urllib.parse
 import urllib.request
 
 from ddgs import DDGS
 from simpleeval import InvalidExpression, simple_eval
+
+from modules.config import TOOL_NETWORK_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +38,8 @@ def recherche_web(requete: str) -> str:
     """
     logger.info(f"[TOOL EXECUTED] Recherche web appelée pour : {requete}")
     try:
-        # On demande les 3 premiers résultats du web
-        results = list(DDGS().text(requete, max_results=3))
+        # On demande les 3 premiers résultats du web avec un timeout explicite
+        results = list(DDGS(timeout=TOOL_NETWORK_TIMEOUT).text(requete, max_results=3))
 
         if not results:
             return f"Aucun résultat trouvé pour '{requete}'."
@@ -52,6 +55,11 @@ def recherche_web(requete: str) -> str:
         logger.info("Recherche web exécutée avec succès.")
         return reponse_formatee
 
+    except (TimeoutError, urllib.error.URLError) as e:
+        logger.error(
+            f"Timeout ou erreur réseau lors de la recherche web pour {requete} : {e}"
+        )
+        return f"Délai d'attente dépassé (timeout) pour la recherche sur Internet : {requete}."
     except Exception as e:
         logger.error(f"Erreur lors de la recherche web pour {requete} : {e}")
         return f"Désolé, je n'ai pas réussi à faire la recherche sur Internet pour {requete}."
@@ -67,7 +75,7 @@ def meteo(ville: str) -> str:
         # 1. On cherche d'abord les coordonnées géographiques (latitude/longitude) de la ville
         geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={urllib.parse.quote(ville)}&count=1&language=fr&format=json"
 
-        with urllib.request.urlopen(geo_url) as response:
+        with urllib.request.urlopen(geo_url, timeout=TOOL_NETWORK_TIMEOUT) as response:
             geo_data = json.loads(response.read().decode())
 
         if not geo_data.get("results"):
@@ -82,7 +90,9 @@ def meteo(ville: str) -> str:
         # 2. On interroge la météo actuelle avec ces coordonnées
         weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,weather_code"
 
-        with urllib.request.urlopen(weather_url) as response:
+        with urllib.request.urlopen(
+            weather_url, timeout=TOOL_NETWORK_TIMEOUT
+        ) as response:
             weather_data = json.loads(response.read().decode())
 
         current = weather_data.get("current", {})
@@ -109,8 +119,11 @@ def meteo(ville: str) -> str:
         logger.info(f"Météo récupérée avec succès : {resultat_meteo}")
         return resultat_meteo
 
-    except Exception as e:
+    except (TimeoutError, urllib.error.URLError) as e:
         logger.error(
-            f"❌ Erreur lors de la récupération de la météo pour {ville} : {e}"
+            f"Timeout ou erreur réseau lors de la récupération de la météo pour {ville} : {e}"
         )
+        return f"Délai d'attente dépassé (timeout) pour le service météo ({ville})."
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération de la météo pour {ville} : {e}")
         return f"Désolé, je n'ai pas pu récupérer la météo pour {ville}."

@@ -31,6 +31,16 @@ def test_document_deja_indexe(supabase):
     assert document_deja_indexe([], "a.pdf") is False
 
 
+def test_documents_indexes_ignore_les_lignes_corrompues(supabase):
+    # Une ligne invalide en base (nom de fichier non textuel) ne doit pas faire
+    # echouer toute la liste : les autres documents restent utilisables.
+    supabase.tables["document_chunks"] = [
+        {"session_id": "s1", "file_name": "ok.pdf"},
+        {"session_id": "s1", "file_name": 123},  # non conforme au schema
+    ]
+    assert documents_indexes(supabase, "s1") == [{"file_name": "ok.pdf", "chunks": 1}]
+
+
 def test_indexation_remplace_uniquement_le_document_recharge():
     # Journal partagé : on prouve l'ordre embedding -> purge -> insertion.
     timeline = []
@@ -113,24 +123,20 @@ def test_supprimer_document_echec(supabase):
     assert supprimer_document(supabase, "s1", "a.pdf") is False
 
 
-def test_documents_indexes_ignore_documents_corrompus(supabase):
-    # Un document avec chunks n?gatifs est ignor? par Pydantic
-    supabase.tables["document_chunks"] = [
-        {"session_id": "s1", "file_name": "bon.pdf"},
-    ]
-    docs = documents_indexes(supabase, "s1")
-    assert len(docs) == 1
-    assert docs[0]["file_name"] == "bon.pdf"
+def test_documents_indexes_rejette_un_resume_invalide(supabase, monkeypatch):
+    # Garde-fou Pydantic : un resume incoherent remonte par la base est ignore
+    # sans faire echouer toute la liste. On patche la reference importee par le
+    # service (celle de modules.database est deja liee depuis l'import).
+    import services.base_connaissance as bc
 
-
-def test_documents_indexes_ignore_elements_invalides(supabase, monkeypatch):
-    import modules.database as db
-
-    # On simule un retour de database contenant un ?l?ment qui n'a pas les bons types
     monkeypatch.setattr(
-        db,
+        bc,
         "list_session_documents",
-        lambda s, sid: [{"file_name": "x.pdf", "chunks": -5}],
+        lambda client, session_id: [
+            {"file_name": "valide.pdf", "chunks": 2},
+            {"file_name": "corrompu.pdf", "chunks": -5},  # viole ge=0
+        ],
     )
-    docs = documents_indexes(supabase, "s1")
-    assert docs == []  # Rejet? par la validation ge=0 de DocumentSummary
+    assert documents_indexes(supabase, "s1") == [
+        {"file_name": "valide.pdf", "chunks": 2}
+    ]

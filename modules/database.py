@@ -164,7 +164,18 @@ def list_session_documents(supabase_client, session_id):
 
     compteurs = {}
     for ligne in reponse.data or []:
-        nom = ligne.get("file_name") or "(sans nom)"
+        nom = ligne.get("file_name")
+        if nom in (None, ""):
+            nom = "(sans nom)"
+        elif not isinstance(nom, str):
+            # Ligne corrompue : on l'ignore plutot que de faire echouer tout le
+            # listing (un file_name non textuel casserait aussi le tri plus bas).
+            logger.warning(
+                "Chunk ignore : file_name non textuel (%r) pour la session %s",
+                nom,
+                session_id[:8],
+            )
+            continue
         compteurs[nom] = compteurs.get(nom, 0) + 1
 
     return [
