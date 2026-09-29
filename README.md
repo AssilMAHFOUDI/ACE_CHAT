@@ -429,6 +429,8 @@ ruff format .           # formatting
 
 | Tag | Highlights |
 | --- | --- |
+| `v8.1.0` | Resilient agent and bounded memory: forced synthesis when the ReAct loop runs out of iterations, per-request timeouts on network tools, UTF-8 encoding guard, sliding-window conversation memory with an incremental summary, 115 tests at 100% coverage |
+| `v8.0.1` | README brought in line with the code: layered architecture, 87 tests at 99% coverage, Ruff and CI |
 | `v8.0.0` | Knowledge base with several documents per session: per-document cleanup, search scope selector, sources under the answer, SQL filter by document, single-read file handling, answers in the language of the question, batched ingestion, Pydantic schemas, `services/` layer, 87 tests and CI |
 | `v7.0.1` | Calculator hardened with `simpleeval` |
 | `v7.0.0` | Chunking and Gemini embeddings, vector search in Supabase |
