@@ -32,6 +32,15 @@ OBSERVATIONS_MAX_CHARS = 2000
 # 2 pour la météo (géocodage puis prévisions), soit 20 s au pire.
 TOOL_NETWORK_TIMEOUT = 10
 
+# --- Mémoire de conversation ---
+# Nombre de messages les plus récents envoyés mot pour mot au modèle. Choisi
+# pair pour que la fenêtre se termine sur une paire question/réponse et que
+# l'historique reste aligné. En dessous de cette taille, rien n'est compressé.
+MEMORY_WINDOW_SIZE = 6
+# Longueur maximale du résumé qui remplace les messages plus anciens : borne la
+# taille du prompt, quelle que soit la durée de la conversation.
+MEMORY_SUMMARY_MAX_CHARS = 1500
+
 
 # --- Modèles Gemini ---
 CHAT_MODEL = "gemini-3.5-flash-lite"

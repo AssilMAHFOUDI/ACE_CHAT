@@ -20,6 +20,7 @@ from services.base_connaissance import (
     indexer_document,
     supprimer_document,
 )
+from services.memoire import compresser_historique
 from services.recherche import (
     chercher_passages,
     construire_prompt,
@@ -164,6 +165,10 @@ with st.sidebar:
             supabase, st.session_state.session_id
         )
         st.session_state.messages = []
+        # La mémoire suit la session : sans cette purge, un résumé survivrait
+        # aux messages qu'il résumait.
+        st.session_state.pop("resume", None)
+        st.session_state.pop("resume_jusqua", None)
 
         st.rerun()
 
@@ -214,8 +219,20 @@ if prompt := st.chat_input("Pose-moi une question sur tes documents..."):
     else:
         prompt_pour_ia = prompt
 
-    # B. Traduction de l'historique pour Gemini
-    gemini_history = format_history_for_gemini(st.session_state.messages)
+    # B. Traduction de l'historique pour Gemini, mémoire bornée : au-delà de
+    # MEMORY_WINDOW_SIZE messages, les plus anciens sont remplacés par un résumé
+    # (calculé une seule fois, puis réutilisé). L'historique affiché et persisté
+    # reste complet : seule la vue envoyée au modèle est compressée.
+    historique_compresse, resume, resume_jusqua = compresser_historique(
+        st.session_state.messages,
+        client,
+        st.session_state.get("resume"),
+        st.session_state.get("resume_jusqua", 0),
+    )
+    st.session_state.resume = resume
+    st.session_state.resume_jusqua = resume_jusqua
+
+    gemini_history = format_history_for_gemini(historique_compresse)
     gemini_history.append({"role": "user", "parts": [{"text": prompt_pour_ia}]})
 
     # C. Affichage et Sauvegarde de la question utilisateur

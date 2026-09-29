@@ -3,7 +3,7 @@
 **ACE CHAT** is an intelligent chat application built with **Streamlit** and powered by **Google Gemini**. It combines a conversational assistant, a **vector-based RAG** (Retrieval-Augmented Generation) document analysis mode, and a **ReAct agent loop** that can autonomously call external tools (web search, weather, calculator). Conversation history and document embeddings are persisted in **Supabase**.
 
 The codebase is layered (`app.py` -> `services/` -> `modules/`), validated by an
-automated test suite (87 tests, 99% coverage) and checked by **Ruff** in CI.
+automated test suite (115 tests, 100% coverage) and checked by **Ruff** in CI.
 
 ---
 
@@ -51,11 +51,12 @@ ACE_CHAT/
     tools.py                    # Tools exposed to Gemini (web, weather, calc)
   services/
     session.py                  # Session id, chat history (load / save / reset)
+    memoire.py                  # Bounded context: sliding window + running summary
     base_connaissance.py        # Knowledge base: index, list and delete documents
     recherche.py                # Question -> embedding -> search -> RAG prompt
   tests/
     conftest.py                 # In-memory fakes (Supabase, Gemini) and coverage theme
-    test_*.py                   # 87 unit and integration tests
+    test_*.py                   # 115 unit and integration tests
     htmlcov/                    # Generated coverage report (not versioned)
 ```
 
@@ -65,13 +66,14 @@ ACE_CHAT/
 | --- | --- |
 | `app.py` | Streamlit UI only: sidebar (mode, knowledge base, search scope), chat flow, live status boxes, ingestion progress bar. Every business action is delegated to `services/`. |
 | `services/session.py` | Session identifier, chat history (load / save / reset) and role validation. |
+| `services/memoire.py` | Bounded conversation context: keeps the last `MEMORY_WINDOW_SIZE` messages verbatim and replaces older ones with an incrementally updated summary. |
 | `services/base_connaissance.py` | Knowledge base: list indexed documents, index a document (extract -> chunk -> embed -> replace), delete a single document. |
 | `services/recherche.py` | RAG search: embed the question, call the Supabase RPC, build the context prompt, extract the sources. |
 | `models/schemas.py` | Pydantic v2 models (`ChatMessage`, `DocumentSummary`, `DocumentChunk`) validating what comes back from Supabase. |
 | `modules/ai_engine.py` | Gemini client init, history conversion, ReAct agent loop, tool dispatch, embeddings (`get_embeddings`), RAG prompt generation. |
 | `modules/database.py` | Cached Supabase connection, chat history CRUD, document listing (`list_session_documents`), semantic chunk search (`search_relevant_chunks`), cleanup of one document or of the whole session (`clear_document_chunks`). |
 | `modules/document_processor.py` | Extract text (`.txt` / `.pdf`), split into overlapping chunks, embed and store each chunk. |
-| `modules/config.py` | Centralised constants (chunking, batching, RAG thresholds, Gemini models, embedding dimensions) and logging setup. |
+| `modules/config.py` | Centralised constants (chunking, batching, RAG thresholds, agent loop, network timeouts, conversation memory window, Gemini models, embedding dimensions) and logging setup. |
 | `modules/tools.py` | `recherche_web`, `meteo`, and `calculatrice` functions callable by Gemini. |
 
 The dependency direction is one-way: `app.py` (presentation) calls `services/` (business
@@ -84,7 +86,7 @@ same logic could be reused by a CLI or an API without modification.
 
 `get_ai_response()` in `modules/ai_engine.py` implements a **ReAct (Reason + Act)** loop:
 
-1. The conversation history stored in Supabase plus the latest user message are sent to a fresh Gemini chat session (`client.chats.create`), so the context is rebuilt on every turn instead of relying on server-side state.
+1. The conversation history stored in Supabase (compressed by `services/memoire.py`, see below) plus the latest user message are sent to a fresh Gemini chat session (`client.chats.create`), so the context is rebuilt on every turn instead of relying on server-side state.
 2. If the model returns `function_calls`, the requested tools are executed and their results are sent back to the model as function responses (`types.Part.from_function_response`).
 3. The loop repeats (up to `max_iterations = 10`) until the model returns a plain text answer.
 4. A `status_callback` reports each reasoning step and tool call to the Streamlit UI (`st.status`).
@@ -105,6 +107,29 @@ send_message(current_message)
                                     |
                                     +--> loop again
 ```
+
+### Conversation Memory (bounded context)
+
+The context sent to Gemini is kept under a hard limit by `services/memoire.py`,
+*before* `format_history_for_gemini()` runs:
+
+1. The last `MEMORY_WINDOW_SIZE` messages (6) are always kept verbatim.
+2. When older messages fall out of that window, they are summarised into a short
+   block (`MEMORY_SUMMARY_MAX_CHARS` characters) injected as a leading
+   `[Résumé des échanges précédents]` turn.
+3. The summary is **incremental**: it is recomputed only when new messages spill
+   out of the window, and the previous summary is folded into that call, so a
+   long conversation does not pay a full re-summarisation at every turn. The
+   number of messages already covered is cached in `st.session_state`
+   (`resume` / `resume_jusqua`) and cleared by the *Recommencer* button.
+4. If the summarisation call fails, the recent window is sent alone and the
+   cached index does not advance, so the same messages are summarised again on
+   the next turn: nothing is silently dropped.
+
+Displayed history and Supabase persistence stay **complete**: only the view
+handed to the model is compressed.
+
+
 
 ---
 
@@ -334,8 +359,8 @@ The project includes a `.devcontainer` configuration. In a Codespace, the app st
 
 ## Testing and Code Quality
 
-The project ships with an automated test suite (**87 tests**) covering `modules/`,
-`services/` and `models/`, at **99% line coverage**.
+The project ships with an automated test suite (**115 tests**) covering `modules/`,
+`services/` and `models/`, at **100% line coverage**.
 
 ```bash
 python -m pytest
@@ -392,8 +417,7 @@ ruff format .           # formatting
 
 ## Possible Improvements
 
-- Add timeouts and retries to the network tools (`tools.py`).
-- Bound or trim the conversation history sent to Gemini, which currently grows with the session.
+- Retry the network tools with an exponential backoff on transient failures (a per-request timeout is already in place).
 - Handle scanned (image-only) PDFs, where text extraction returns nothing: OCR (page rendering + a vision model) would cover them.
 - Stream the answer token by token (`st.write_stream`) instead of waiting for the full response.
 - Cover the Streamlit layer (`app.py`) with integration tests: it is currently outside the coverage scope.
