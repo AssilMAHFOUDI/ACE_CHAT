@@ -1,39 +1,39 @@
-"""Configuration centralisee d ACE CHAT.
+"""Configuration centralisée d'ACE CHAT.
 
-Toutes les constantes ajustables (decoupage, lots, seuils, modeles) et la
-configuration du logging vivent ici, pour eviter les valeurs magiques
-dispersees dans les modules. Ce module ne depend de rien d autre (stdlib seule) :
-il reste testable sans Streamlit ni reseau.
+Toutes les constantes ajustables (découpage, lots, seuils, modèles) et la
+configuration du logging vivent ici, pour éviter les valeurs magiques
+dispersées dans les modules. Ce module ne dépend de rien d'autre (stdlib seule) :
+il reste testable sans Streamlit ni réseau.
 """
 
 import logging
 
-# --- Decoupage des documents ---
-CHUNK_SIZE = 1000  # taille d un morceau de texte (caracteres)
-CHUNK_OVERLAP = 200  # chevauchement entre morceaux consecutifs
-CHUNK_MIN_LENGTH = 10  # morceaux plus courts sont ignores
+# --- Découpage des documents ---
+CHUNK_SIZE = 1000  # taille d'un morceau de texte (caractères)
+CHUNK_OVERLAP = 200  # chevauchement entre morceaux consécutifs
+CHUNK_MIN_LENGTH = 10  # morceaux plus courts sont ignorés
 
 # --- Batching ---
-EMBEDDING_BATCH_SIZE = 20  # textes par requete d embedding
-INSERT_BATCH_SIZE = 50  # lignes par requete INSERT vers Supabase
+EMBEDDING_BATCH_SIZE = 20  # textes par requête d'embedding
+INSERT_BATCH_SIZE = 50  # lignes par requête INSERT vers Supabase
 
-# --- Recherche semantique (RAG) ---
-MATCH_THRESHOLD = 0.3  # similarite cosinus minimale
-MATCH_COUNT = 4  # nombre d extraits remontes par question
+# --- Recherche sémantique (RAG) ---
+MATCH_THRESHOLD = 0.3  # similarité cosinus minimale
+MATCH_COUNT = 4  # nombre d'extraits remontés par question
 
 # --- Agent (ReAct) ---
-MAX_ITERATIONS = 10  # boucle raison/act bornee
-# Taille maximale du rappel des observations injecte dans le message de
-# synthese forcee (fin de boucle) : borne la taille du prompt.
+MAX_ITERATIONS = 10  # boucle raison/act bornée
+# Taille maximale du rappel des observations injecté dans le message de
+# synthèse forcée (fin de boucle) : borne la taille du prompt.
 OBSERVATIONS_MAX_CHARS = 2000
 
-# --- Outils & Reseau ---
-# Timeout en secondes applique a CHAQUE appel reseau : 1 pour la recherche web,
-# 2 pour la meteo (geocodage puis previsions), soit 20 s au pire.
+# --- Outils & Réseau ---
+# Timeout en secondes appliqué à CHAQUE appel réseau : 1 pour la recherche web,
+# 2 pour la météo (géocodage puis prévisions), soit 20 s au pire.
 TOOL_NETWORK_TIMEOUT = 10
 
 
-# --- Modeles Gemini ---
+# --- Modèles Gemini ---
 CHAT_MODEL = "gemini-3.5-flash-lite"
 EMBEDDING_MODEL = "gemini-embedding-2"
 # Dimension des vecteurs produite par EMBEDDING_MODEL : doit correspondre
@@ -42,9 +42,9 @@ EMBEDDING_DIMENSIONS = 3072
 
 
 def configurer_logging(niveau=logging.INFO):
-    """Configure le logging global une seule fois (appele par app.py).
+    """Configure le logging global une seule fois (appelé par app.py).
 
-    Messages sans emoji : certains terminaux n affichent pas les caracteres
+    Messages sans emoji : certains terminaux n'affichent pas les caractères
     non ASCII, ce qui rendait les logs illisibles (mojibake).
     """
     logging.basicConfig(

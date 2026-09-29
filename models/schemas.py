@@ -1,4 +1,4 @@
-"""Sch?mas de donn?es structur?s et valid?s avec Pydantic."""
+"""Schémas de données structurés et validés avec Pydantic."""
 
 from typing import Literal
 
@@ -15,7 +15,7 @@ class ChatMessage(BaseModel):
 
 
 class DocumentSummary(BaseModel):
-    """R?sum? synth?tique d'un document pr?sent dans la base de connaissance."""
+    """Résumé synthétique d'un document présent dans la base de connaissance."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -24,7 +24,7 @@ class DocumentSummary(BaseModel):
 
 
 class DocumentChunk(BaseModel):
-    """Fragment de texte vectoris? pour la recherche RAG."""
+    """Fragment de texte vectorisé pour la recherche RAG."""
 
     model_config = ConfigDict(extra="ignore")
 

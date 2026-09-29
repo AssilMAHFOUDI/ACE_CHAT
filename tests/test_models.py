@@ -1,4 +1,4 @@
-"""Tests unitaires pour les mod?les Pydantic."""
+"""Tests unitaires pour les modèles Pydantic."""
 
 import pytest
 from pydantic import ValidationError
@@ -11,7 +11,7 @@ def test_chat_message_validation():
     assert msg.role == "user"
     assert msg.content == "Hello world"
 
-    # R?le invalide
+    # Rôle invalide
     with pytest.raises(ValidationError):
         ChatMessage(role="inconnu", content="test")  # type: ignore[arg-type]
 
@@ -25,7 +25,7 @@ def test_document_summary_validation():
     assert doc.file_name == "doc.pdf"
     assert doc.chunks == 10
 
-    # Chunks n?gatifs
+    # Chunks négatifs
     with pytest.raises(ValidationError):
         DocumentSummary(file_name="doc.pdf", chunks=-1)
 

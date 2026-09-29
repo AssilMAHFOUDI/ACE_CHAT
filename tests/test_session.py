@@ -34,7 +34,7 @@ def test_charger_historique_mappe_roles_et_contenus(supabase):
         {
             "session_id": "s1",
             "role": "systeme-corrompu",
-            "content": "?",
+            "content": "contenu ignoré",
             "created_at": "2026-01-03",
         },
     ]

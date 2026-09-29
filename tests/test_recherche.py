@@ -83,7 +83,7 @@ def test_filtre_applique_par_base_apres_repli(supabase, ia):
 
 
 def test_chercher_passages_ignore_chunks_corrompus(supabase, ia):
-    # Un chunk sans content (invalide pour DocumentChunk) est ignor? sans planter
+    # Un chunk sans content (invalide pour DocumentChunk) est ignoré sans planter
     supabase.resultats_rpc["match_document_chunks"] = [
         {"id": 1, "file_name": "valide.pdf", "content": "OK"},
         {"id": 2, "file_name": "corrompu.pdf"},  # manque 'content'

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ace-chat"
 version = "8.0.0"
-description = "Assistant conversationnel intelligent propuls? par Streamlit, Gemini et Supabase (RAG & Agent ReAct)"
+description = "Assistant conversationnel intelligent propulsé par Streamlit, Gemini et Supabase (RAG & Agent ReAct)"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -39,7 +39,7 @@ select = [
     "UP",  # pyupgrade (syntaxe moderne Python 3.10+)
 ]
 ignore = [
-    "E501",  # line too long (g?r? automatiquement par le formateur)
+    "E501",  # line too long (géré automatiquement par le formateur)
 ]
 
 [tool.ruff.lint.isort]
@@ -60,4 +60,4 @@ source = ["modules", "services", "models"]
 
 [tool.coverage.html]
 directory = "tests/htmlcov"
-title = "ACE CHAT ? Couverture"
+title = "ACE CHAT · Couverture"

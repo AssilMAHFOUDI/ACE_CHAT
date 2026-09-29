@@ -31,12 +31,12 @@ def chercher_passages(
             chunk = DocumentChunk.model_validate(b)
             valides.append(chunk.model_dump(exclude_none=True))
         except Exception as err:
-            logger.warning("Extrait RAG invalide ignor? : %s", err)
+            logger.warning("Extrait RAG invalide ignoré : %s", err)
     return valides
 
 
 def extraire_sources(chunks: list[dict[str, Any]]) -> list[str]:
-    """Liste tri?e des documents r?ellement utilis?s pour r?pondre."""
+    """Liste triée des documents réellement utilisés pour répondre."""
     return sorted({c["file_name"] for c in chunks if c.get("file_name")})
 
 
@@ -46,11 +46,11 @@ def construire_prompt(chunks: list[dict[str, Any]], question: str) -> str:
         logger.info("Aucun extrait pertinent pour la question : %s", question)
         return (
             f"L'utilisateur pose cette question : {question}, mais aucun extrait "
-            "pertinent n'a ?t? trouv? dans la base."
+            "pertinent n'a été trouvé dans la base."
         )
     return generate_rag_prompt(chunks, question)
 
 
 def filtre_applique_par_base() -> bool:
-    """True si le filtrage par document est fait par la base de donn?es."""
+    """True si le filtrage par document est fait par la base de données."""
     return filtre_document_disponible()
