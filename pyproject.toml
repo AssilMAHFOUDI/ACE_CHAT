@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ace-chat"
-version = "8.2.0"
+version = "8.3.0"
 description = "Assistant conversationnel intelligent propulsé par Streamlit, Gemini et Supabase (RAG & Agent ReAct)"
 readme = "README.md"
 requires-python = ">=3.10"

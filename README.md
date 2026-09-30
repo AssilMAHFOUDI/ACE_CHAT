@@ -494,6 +494,7 @@ ruff format .           # formatting
 
 | Tag | Highlights |
 | --- | --- |
+| `v8.3.0` | Planning ahead of every question: the planner shares the compressed history and either answers directly (no agent session, a single call) or returns a 2-4 step plan; replies are streamed token by token, and the text of a tool round is cleared from the answer zone, 173 tests at 100% coverage |
 | `v8.2.0` | Agent reflection: optional initial plan for substantial questions, bounded one-shot self-critique of tool-backed answers, identical tool calls served from a cache with stagnation detection, batched memory summaries, 163 tests at 100% coverage |
 | `v8.1.0` | Resilient agent and bounded memory: forced synthesis when the ReAct loop runs out of iterations, per-request timeouts on network tools, UTF-8 encoding guard, sliding-window conversation memory with an incremental summary, 115 tests at 100% coverage |
 | `v8.0.1` | README brought in line with the code: layered architecture, 87 tests at 99% coverage, Ruff and CI |
