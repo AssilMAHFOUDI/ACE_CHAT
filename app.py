@@ -267,6 +267,14 @@ if prompt := st.chat_input("Pose-moi une question sur tes documents..."):
             )
             if sources:
                 st.caption("📎 Sources : " + ", ".join(sources))
+            if st.session_state.resume:
+                # La mémoire est un état invisible : on l'affiche pour que
+                # l'utilisateur sache que les débuts de la conversation ont été
+                # résumés (et donc reformulés) pour cet appel.
+                st.caption(
+                    f"🧠 Mémoire : {st.session_state.resume_jusqua} message(s) le "
+                    "plus ancien(s) résumé(s) pour cet appel."
+                )
 
         except Exception as e:
             st.error(f"Erreur : {e}")
