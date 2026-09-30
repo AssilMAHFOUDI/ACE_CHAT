@@ -243,21 +243,40 @@ if prompt := st.chat_input("Pose-moi une question sur tes documents..."):
 
     # D. Appel à l'IA et Sauvegarde de la réponse
     with st.chat_message("assistant"):
+        # Deux zones distinctes : le raisonnement, puis la réponse juste en
+        # dessous. `st.empty()` est lié à sa position, donc la réponse s'écrit au
+        # fil de l'eau dans sa zone sans jamais s'intercaler dans les étapes.
+        zone_raisonnement = st.container()
+        zone_reponse = st.empty()
         try:
-            with st.status(
-                "L'Agent analyse les extraits...", expanded=True
-            ) as status_box:
+            with zone_raisonnement:
+                with st.status(
+                    "L'Agent analyse les extraits...", expanded=True
+                ) as status_box:
 
-                def update_ui_status(message):
-                    status_box.write(message)
+                    def update_ui_status(message):
+                        status_box.write(message)
 
-                texte_reponse = get_ai_response(
-                    client, gemini_history, status_callback=update_ui_status
-                )
-                status_box.update(
-                    label="Réponse prête !", state="complete", expanded=True
-                )
-                st.markdown(texte_reponse)
+                    def afficher_flux(texte_partiel):
+                        # Le curseur signale la rédaction en cours ; un texte vide
+                        # efface la zone (tour d'outil : ce n'est pas la réponse).
+                        zone_reponse.markdown(
+                            f"{texte_partiel}▌" if texte_partiel else ""
+                        )
+
+                    texte_reponse = get_ai_response(
+                        client,
+                        gemini_history,
+                        status_callback=update_ui_status,
+                        texte_callback=afficher_flux,
+                    )
+                    status_box.update(
+                        label="Réponse prête !", state="complete", expanded=True
+                    )
+
+            # Rendu final : il retire le curseur et couvre les cas où rien n'a pu
+            # être publié en flux (réponse de repli, flux indisponible).
+            zone_reponse.markdown(texte_reponse)
 
             st.session_state.messages.append(
                 {"role": "assistant", "content": texte_reponse}
