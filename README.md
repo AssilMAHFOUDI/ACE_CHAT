@@ -3,7 +3,7 @@
 **ACE CHAT** is an intelligent chat application built with **Streamlit** and powered by **Google Gemini**. It combines a conversational assistant, a **vector-based RAG** (Retrieval-Augmented Generation) document analysis mode, and a **ReAct agent loop** that can autonomously call external tools (web search, weather, calculator). Conversation history and document embeddings are persisted in **Supabase**.
 
 The codebase is layered (`app.py` -> `services/` -> `modules/`), validated by an
-automated test suite (115 tests, 100% coverage) and checked by **Ruff** in CI.
+automated test suite (163 tests, 100% coverage) and checked by **Ruff** in CI.
 
 ---
 
@@ -14,6 +14,7 @@ automated test suite (115 tests, 100% coverage) and checked by **Ruff** in CI.
 - **Knowledge Base per Session** - The sidebar lists every indexed document with its chunk count, lets you delete **one document at a time** (🗑️) without touching the others, and lets you aim a question at *all documents* or at *one specific document*.
 - **Sources** - Each retrieved excerpt is labelled with its document (`[Extrait de <fichier>]`) and the file names actually used are shown under the answer (`📎 Sources : ...`).
 - **ReAct Agent Loop** - The model autonomously decides, step by step, whether to call a tool or produce a final answer. Tool results are fed back into the model until it is ready to respond (bounded to 10 iterations).
+- **Reflection** - A substantial question is planned first, an answer that used tools is self-reviewed once before being shown, and a repeated tool call is served from the cache instead of hitting the network again.
 - **Tool Calling (Function Calling)** - Gemini can automatically invoke:
   - **Web search** (DuckDuckGo) for news, scores, and recent information.
   - **Weather** (Open-Meteo) for the current weather in a city.
@@ -56,7 +57,7 @@ ACE_CHAT/
     recherche.py                # Question -> embedding -> search -> RAG prompt
   tests/
     conftest.py                 # In-memory fakes (Supabase, Gemini) and coverage theme
-    test_*.py                   # 115 unit and integration tests
+    test_*.py                   # 163 unit and integration tests
     htmlcov/                    # Generated coverage report (not versioned)
 ```
 
@@ -66,14 +67,15 @@ ACE_CHAT/
 | --- | --- |
 | `app.py` | Streamlit UI only: sidebar (mode, knowledge base, search scope), chat flow, live status boxes, ingestion progress bar. Every business action is delegated to `services/`. |
 | `services/session.py` | Session identifier, chat history (load / save / reset) and role validation. |
-| `services/memoire.py` | Bounded conversation context: keeps the last `MEMORY_WINDOW_SIZE` messages verbatim and replaces older ones with an incrementally updated summary. |
+| `services/memoire.py` | Bounded conversation context: keeps the last `MEMORY_WINDOW_SIZE` messages verbatim and replaces older ones with an incrementally updated summary. Summaries are batched until `MEMORY_MIN_OVERFLOW` messages spill out, so a long conversation does not pay one call per turn. |
+| `modules/reflexion.py` | Reflection helpers, pure logic with no Gemini client (the model call is injected): optional initial plan, bounded self-critique of the draft answer, verdict parsing and observation formatting. |
 | `services/base_connaissance.py` | Knowledge base: list indexed documents, index a document (extract -> chunk -> embed -> replace), delete a single document. |
 | `services/recherche.py` | RAG search: embed the question, call the Supabase RPC, build the context prompt, extract the sources. |
 | `models/schemas.py` | Pydantic v2 models (`ChatMessage`, `DocumentSummary`, `DocumentChunk`) validating what comes back from Supabase. |
 | `modules/ai_engine.py` | Gemini client init, history conversion, ReAct agent loop, tool dispatch, embeddings (`get_embeddings`), RAG prompt generation. |
 | `modules/database.py` | Cached Supabase connection, chat history CRUD, document listing (`list_session_documents`), semantic chunk search (`search_relevant_chunks`), cleanup of one document or of the whole session (`clear_document_chunks`). |
 | `modules/document_processor.py` | Extract text (`.txt` / `.pdf`), split into overlapping chunks, embed and store each chunk. |
-| `modules/config.py` | Centralised constants (chunking, batching, RAG thresholds, agent loop, network timeouts, conversation memory window, Gemini models, embedding dimensions) and logging setup. |
+| `modules/config.py` | Centralised constants (chunking, batching, RAG thresholds, agent loop, reflection flags and limits, network timeouts, conversation memory window and summarisation threshold, Gemini models, embedding dimensions) and logging setup. |
 | `modules/tools.py` | `recherche_web`, `meteo`, and `calculatrice` functions callable by Gemini. |
 
 The dependency direction is one-way: `app.py` (presentation) calls `services/` (business
@@ -88,8 +90,9 @@ same logic could be reused by a CLI or an API without modification.
 
 1. The conversation history stored in Supabase (compressed by `services/memoire.py`, see below) plus the latest user message are sent to a fresh Gemini chat session (`client.chats.create`), so the context is rebuilt on every turn instead of relying on server-side state.
 2. If the model returns `function_calls`, the requested tools are executed and their results are sent back to the model as function responses (`types.Part.from_function_response`).
-3. The loop repeats (up to `max_iterations = 10`) until the model returns a plain text answer.
-4. A `status_callback` reports each reasoning step and tool call to the Streamlit UI (`st.status`).
+3. An identical call (same tool, same arguments) is **never executed twice**: the cached result is returned with a hint to change approach, and a second repetition ends the loop with a forced synthesis, so a spinning agent costs no extra network request.
+4. The loop repeats (up to `max_iterations = 10`) until the model returns a plain text answer, at which point the draft is optionally self-reviewed (see *Reflection* below).
+5. A `status_callback` reports each reasoning step and tool call to the Streamlit UI (`st.status`).
 
 Automatic function calling is explicitly disabled (`automatic_function_calling=disable=True`) so the application keeps control over tool execution, error handling, and UI updates. A system instruction injects the current date for time-aware reasoning.
 
@@ -128,6 +131,36 @@ The context sent to Gemini is kept under a hard limit by `services/memoire.py`,
 
 Displayed history and Supabase persistence stay **complete**: only the view
 handed to the model is compressed.
+
+### Reflection (plan, self-critique, stagnation)
+
+`modules/reflexion.py` holds the reflection logic. It never talks to Gemini
+itself: each helper receives a `appeler_modele` callable, which keeps the module
+pure, offline-testable, and reusable by any other interface.
+
+1. **Initial plan** (`AGENT_PLAN_ACTIVEE`, `PLAN_SEUIL_CARACTERES`, `PLAN_MAX_CHARS`).
+   A substantial question (long, or carrying several sub-questions) gets a 2-4
+   step plan. The plan is built in its own throwaway session (no history, tools
+   disabled), shown in the UI, prepended to the first agent message and recalled
+   in the forced synthesis. The model may answer `PLAN SIMPLE` when no plan is
+   needed, in which case nothing is injected: a trivial question never pays for
+   planning.
+2. **Bounded self-critique** (`AGENT_CRITIQUE_ACTIVEE`, `CRITIQUE_MAX_CHARS`,
+   `CRITIQUE_BROUILLON_MAX_CHARS`). Once the agent holds a text answer *and* has
+   collected observations, the draft is reviewed once against the question and
+   those observations. The model answers `OK` or `INSUFFISANT: <reason>`; a
+   refusal relaunches the agent with the reason (inside the same iteration
+   budget). A plain chat answer that used no tool is never reviewed, and an
+   unreadable verdict, an empty answer or a failing call all **accept the draft**:
+   reflection can downgrade quality, never block a reply.
+3. **Stagnation and tool cache** (`STAGNATION_MAX_APPELS_IDENTIQUES`). Tool calls
+   are keyed by `(name, sorted arguments)`. A repeat is served from the cache
+   with a warning instead of hitting the network again; beyond the threshold, the
+   agent stops exploring and concludes from what it already has.
+
+Cost per question: one call for a plain chat answer, one extra for a substantial
+question (the plan), one extra when tools were used (the critique), plus one more
+only if that critique was refused - all bounded by `max_iterations`.
 
 
 
@@ -359,7 +392,7 @@ The project includes a `.devcontainer` configuration. In a Codespace, the app st
 
 ## Testing and Code Quality
 
-The project ships with an automated test suite (**115 tests**) covering `modules/`,
+The project ships with an automated test suite (**163 tests**) covering `modules/`,
 `services/` and `models/`, at **100% line coverage**.
 
 ```bash
@@ -421,7 +454,7 @@ ruff format .           # formatting
 - Handle scanned (image-only) PDFs, where text extraction returns nothing: OCR (page rendering + a vision model) would cover them.
 - Stream the answer token by token (`st.write_stream`) instead of waiting for the full response.
 - Cover the Streamlit layer (`app.py`) with integration tests: it is currently outside the coverage scope.
-- Introduce explicit planning and self-critique to strengthen the agent's autonomy.
+- Ask the self-critique for a structured verdict (Pydantic schema) instead of the plain `OK` / `INSUFFISANT: <reason>` text protocol.
 
 ---
 
@@ -429,6 +462,7 @@ ruff format .           # formatting
 
 | Tag | Highlights |
 | --- | --- |
+| `v8.2.0` | Agent reflection: optional initial plan for substantial questions, bounded one-shot self-critique of tool-backed answers, identical tool calls served from a cache with stagnation detection, batched memory summaries, 163 tests at 100% coverage |
 | `v8.1.0` | Resilient agent and bounded memory: forced synthesis when the ReAct loop runs out of iterations, per-request timeouts on network tools, UTF-8 encoding guard, sliding-window conversation memory with an incremental summary, 115 tests at 100% coverage |
 | `v8.0.1` | README brought in line with the code: layered architecture, 87 tests at 99% coverage, Ruff and CI |
 | `v8.0.0` | Knowledge base with several documents per session: per-document cleanup, search scope selector, sources under the answer, SQL filter by document, single-read file handling, answers in the language of the question, batched ingestion, Pydantic schemas, `services/` layer, 87 tests and CI |
