@@ -3,7 +3,7 @@
 **ACE CHAT** is an intelligent chat application built with **Streamlit** and powered by **Google Gemini**. It combines a conversational assistant, a **vector-based RAG** (Retrieval-Augmented Generation) document analysis mode, and a **ReAct agent loop** that can autonomously call external tools (web search, weather, calculator). Conversation history and document embeddings are persisted in **Supabase**.
 
 The codebase is layered (`app.py` -> `services/` -> `modules/`), validated by an
-automated test suite (163 tests, 100% coverage) and checked by **Ruff** in CI.
+automated test suite (173 tests, 100% coverage) and checked by **Ruff** in CI.
 
 ---
 
@@ -14,7 +14,8 @@ automated test suite (163 tests, 100% coverage) and checked by **Ruff** in CI.
 - **Knowledge Base per Session** - The sidebar lists every indexed document with its chunk count, lets you delete **one document at a time** (🗑️) without touching the others, and lets you aim a question at *all documents* or at *one specific document*.
 - **Sources** - Each retrieved excerpt is labelled with its document (`[Extrait de <fichier>]`) and the file names actually used are shown under the answer (`📎 Sources : ...`).
 - **ReAct Agent Loop** - The model autonomously decides, step by step, whether to call a tool or produce a final answer. Tool results are fed back into the model until it is ready to respond (bounded to 10 iterations).
-- **Reflection** - A substantial question is planned first, an answer that used tools is self-reviewed once before being shown, and a repeated tool call is served from the cache instead of hitting the network again.
+- **Reflection** - Every question goes through a planner first: it either answers directly (when the answer is already in the question or in the provided context) or returns a 2-4 step plan. An answer that used tools is self-reviewed once before being shown, and a repeated tool call is served from the cache instead of hitting the network again.
+- **Streamed Answers** - The answer is written token by token as the model produces it, instead of appearing only once the full text is ready.
 - **Tool Calling (Function Calling)** - Gemini can automatically invoke:
   - **Web search** (DuckDuckGo) for news, scores, and recent information.
   - **Weather** (Open-Meteo) for the current weather in a city.
@@ -46,7 +47,7 @@ ACE_CHAT/
   modules/
     __init__.py
     config.py                   # centralised settings, logging setup, model names
-    ai_engine.py                # Gemini client, ReAct loop, embeddings, RAG prompt
+    ai_engine.py                # Gemini client, planner, streamed ReAct loop, RAG prompt
     reflexion.py                # Reflection: plan, self-critique, observations (pure logic)
     database.py                 # Supabase connection, history CRUD, vector search
     document_processor.py       # Text extraction, chunking, vectorization
@@ -58,7 +59,7 @@ ACE_CHAT/
     recherche.py                # Question -> embedding -> search -> RAG prompt
   tests/
     conftest.py                 # In-memory fakes (Supabase, Gemini) and coverage theme
-    test_*.py                   # 163 unit and integration tests
+    test_*.py                   # 173 unit and integration tests
     htmlcov/                    # Generated coverage report (not versioned)
 ```
 
@@ -69,14 +70,14 @@ ACE_CHAT/
 | `app.py` | Streamlit UI only: sidebar (mode, knowledge base, search scope), chat flow, live status boxes, ingestion progress bar. Every business action is delegated to `services/`. |
 | `services/session.py` | Session identifier, chat history (load / save / reset) and role validation. |
 | `services/memoire.py` | Bounded conversation context: keeps the last `MEMORY_WINDOW_SIZE` messages verbatim and replaces older ones with an incrementally updated summary. Summaries are batched until `MEMORY_MIN_OVERFLOW` messages spill out, so a long conversation does not pay one call per turn. |
-| `modules/reflexion.py` | Reflection helpers, pure logic with no Gemini client (the model call is injected): optional initial plan, bounded self-critique of the draft answer, verdict parsing and observation formatting. |
+| `modules/reflexion.py` | Reflection helpers, pure logic with no Gemini client: planner verdict reading (`REPONSE` / `PLAN` protocol), bounded self-critique of the draft answer and observation formatting. |
 | `services/base_connaissance.py` | Knowledge base: list indexed documents, index a document (extract -> chunk -> embed -> replace), delete a single document. |
 | `services/recherche.py` | RAG search: embed the question, call the Supabase RPC, build the context prompt, extract the sources. |
 | `models/schemas.py` | Pydantic v2 models (`ChatMessage`, `DocumentSummary`, `DocumentChunk`) validating what comes back from Supabase. |
-| `modules/ai_engine.py` | Gemini client init, history conversion, ReAct agent loop, tool dispatch, embeddings (`get_embeddings`), RAG prompt generation. |
+| `modules/ai_engine.py` | Gemini client init, history conversion, planner call, ReAct agent loop with streamed replies, tool dispatch, embeddings (`get_embeddings`), RAG prompt generation. |
 | `modules/database.py` | Cached Supabase connection, chat history CRUD, document listing (`list_session_documents`), semantic chunk search (`search_relevant_chunks`), cleanup of one document or of the whole session (`clear_document_chunks`). |
 | `modules/document_processor.py` | Extract text (`.txt` / `.pdf`), split into overlapping chunks, embed and store each chunk. |
-| `modules/config.py` | Centralised constants (chunking, batching, RAG thresholds, agent loop, reflection flags and limits, network timeouts, conversation memory window and summarisation threshold, Gemini models, embedding dimensions) and logging setup. |
+| `modules/config.py` | Centralised constants (chunking, batching, RAG thresholds, agent loop, planning and streaming flags, reflection limits, network timeouts, conversation memory window and summarisation threshold, Gemini models, embedding dimensions) and logging setup. |
 | `modules/tools.py` | `recherche_web`, `meteo`, and `calculatrice` functions callable by Gemini. |
 
 The dependency direction is one-way: `app.py` (presentation) calls `services/` (business
@@ -89,11 +90,13 @@ same logic could be reused by a CLI or an API without modification.
 
 `get_ai_response()` in `modules/ai_engine.py` implements a **ReAct (Reason + Act)** loop:
 
-1. The conversation history stored in Supabase (compressed by `services/memoire.py`, see below) plus the latest user message are sent to a fresh Gemini chat session (`client.chats.create`), so the context is rebuilt on every turn instead of relying on server-side state.
-2. If the model returns `function_calls`, the requested tools are executed and their results are sent back to the model as function responses (`types.Part.from_function_response`).
-3. An identical call (same tool, same arguments) is **never executed twice**: the cached result is returned with a hint to change approach, and a second repetition ends the loop with a forced synthesis, so a spinning agent costs no extra network request.
-4. The loop repeats (up to `max_iterations = 10`) until the model returns a plain text answer, at which point the draft is optionally self-reviewed (see *Reflection* below).
-5. A `status_callback` reports each reasoning step and tool call to the Streamlit UI (`st.status`).
+1. **The planner goes first** (see *Reflection* below). Its session is created with a copy of the compressed history and with tools disabled; it answers either `REPONSE` - it already holds the answer, which is returned immediately, with no agent session and no tool call - or `PLAN` followed by 2 to 4 numbered steps.
+2. The compressed history plus the latest user message (prefixed with `[Plan à suivre]` when a plan was returned) are sent to a fresh Gemini chat session (`client.chats.create`), so the context is rebuilt on every turn instead of relying on server-side state.
+3. If the model returns `function_calls`, the requested tools are executed and their results are sent back to the model as function responses (`types.Part.from_function_response`).
+4. An identical call (same tool, same arguments) is **never executed twice**: the cached result is returned with a hint to change approach, and a second repetition ends the loop with a forced synthesis, so a spinning agent costs no extra network request.
+5. The loop repeats (up to `max_iterations = 10`) until the model returns a plain text answer, at which point the draft is optionally self-reviewed (see *Reflection* below).
+6. The reply is **streamed** (`chat.send_message_stream`, `AGENT_FLUX_ACTIVE`): a `texte_callback` receives the text accumulated so far, and the interface writes it as it comes. A round that ends up calling a tool clears that zone first, so its accompanying sentence ("let me check") is never mistaken for the answer. The same path serves the planner's direct answers and the forced synthesis.
+7. A `status_callback` reports each reasoning step and tool call to the Streamlit UI (`st.status`). Reasoning and answer live in two separate zones (`st.container()` then `st.empty()`), so the streamed answer never lands inside the reasoning trace.
 
 Automatic function calling is explicitly disabled (`automatic_function_calling=disable=True`) so the application keeps control over tool execution, error handling, and UI updates. A system instruction injects the current date for time-aware reasoning.
 
@@ -101,15 +104,22 @@ Automatic function calling is explicitly disabled (`automatic_function_calling=d
 question
    |
    v
-send_message(current_message)
+planner (tools disabled, history copied)
    |
-   +-- no function_calls --> return text --> END
+   +-- REPONSE --> return text --> END            (no agent session at all)
    |
-   +-- function_calls --> execute tool(s)
-                          |
-                          +--> current_message = tool result(s)
-                                    |
-                                    +--> loop again
+   +-- PLAN --> current_message = "[Plan à suivre] ..."
+                    |
+                    v
+        send_message_stream(current_message)
+                    |
+                    +-- no function_calls --> stream the text --> END
+                    |
+                    +-- function_calls --> execute tool(s)
+                                           |
+                                           +--> current_message = tool result(s)
+                                                     |
+                                                     +--> loop again
 ```
 
 ### Conversation Memory (bounded context)
@@ -140,19 +150,30 @@ handed to the model is compressed.
 
 ### Reflection (plan, self-critique, stagnation)
 
-`modules/reflexion.py` holds the reflection logic. It never talks to Gemini
-itself: each helper receives an `appeler_modele` callable, which keeps the module
-pure, offline-testable, and reusable by any other interface.
+`modules/reflexion.py` holds the reflection logic. The critique helpers never
+talk to Gemini themselves (the model call is injected through `appeler_modele`),
+so the module stays pure, offline-testable and reusable by any other interface;
+reading the planner's verdict is a plain text protocol and needs no model at all.
 
-1. **Initial plan** (`AGENT_PLAN_ACTIVEE`, `PLAN_SEUIL_CARACTERES`, `PLAN_MAX_CHARS`).
-   Both reflection steps are **enabled by default** in `modules/config.py`; the
-   guards below are what keep trivial questions free. A substantial question
-   (long, or carrying several sub-questions) gets a 2-4 step plan. The plan is
-   built in its own throwaway session (no history, tools disabled), shown in the
-   UI, prepended to the first agent message and recalled
-   in the forced synthesis. The model may answer `PLAN SIMPLE` when no plan is
-   needed, in which case nothing is injected: a trivial question never pays for
-   planning.
+1. **Systematic planning** (`AGENT_PLAN_ACTIVEE`, `PLAN_MAX_CHARS`,
+   `PLAN_MARQUEUR_MAX_CHARS`). Every question goes through a planner session first
+   - tools disabled, with a **copy** of the compressed history, so it can judge a
+   follow-up ("and in English?") without its own exchange polluting the agent
+   session. It answers on a two-marker protocol:
+   - `REPONSE` followed by the answer: the answer is already entirely in the
+     question or in the context handed over (greeting, mental calculation,
+     reformulation, question already covered by the retrieved excerpts). The text
+     is returned as-is, marker stripped, and **the ReAct loop never opens**: the
+     question costs a single call.
+   - `PLAN` followed by 2 to 4 numbered steps: an external source (web, weather)
+     or several chained steps are needed. The plan is shown in the status box,
+     prepended to the first agent message as `[Plan à suivre]` and recalled in the
+     forced synthesis.
+   Anything else is read as `PLAN`, which keeps the failure mode safe: a plan is
+   never served as an answer, and an empty or unreadable planner reply simply
+   leaves the agent deciding alone. The streaming router waits for the first line
+   (or `PLAN_MARQUEUR_MAX_CHARS` characters) before routing anything, so a plan is
+   never published in the answer zone, while a direct answer streams live.
 2. **Bounded self-critique** (`AGENT_CRITIQUE_ACTIVEE`, `CRITIQUE_MAX_CHARS`,
    `CRITIQUE_BROUILLON_MAX_CHARS`). Once the agent holds a text answer *and* has
    collected observations, the draft is reviewed once against the question and
@@ -168,9 +189,11 @@ pure, offline-testable, and reusable by any other interface.
    with a warning instead of hitting the network again; beyond the threshold, the
    agent stops exploring and concludes from what it already has.
 
-Cost per question: one call for a plain chat answer, one extra for a substantial
-question (the plan), one extra when tools were used (the critique), plus one more
-only if that critique was refused - all bounded by `max_iterations`.
+Cost per question: one call for the planner, plus one per agent round when it
+returned a plan (and per tool round), plus one for the critique when tools were
+used, plus one more only if that critique was refused - all bounded by
+`max_iterations`. A question the planner answers directly costs a single call:
+exactly what it cost before planning existed.
 
 
 
@@ -402,7 +425,7 @@ The project includes a `.devcontainer` configuration. In a Codespace, the app st
 
 ## Testing and Code Quality
 
-The project ships with an automated test suite (**163 tests**) covering `modules/`,
+The project ships with an automated test suite (**173 tests**) covering `modules/`,
 `services/` and `models/`, at **100% line coverage**.
 
 ```bash
@@ -462,9 +485,8 @@ ruff format .           # formatting
 
 - Retry the network tools with an exponential backoff on transient failures (a per-request timeout is already in place).
 - Handle scanned (image-only) PDFs, where text extraction returns nothing: OCR (page rendering + a vision model) would cover them.
-- Stream the answer token by token (`st.write_stream`) instead of waiting for the full response.
 - Cover the Streamlit layer (`app.py`) with integration tests: it is currently outside the coverage scope.
-- Ask the self-critique for a structured verdict (Pydantic schema) instead of the plain `OK` / `INSUFFISANT: <reason>` text protocol.
+- Replace the two text protocols (planner `REPONSE` / `PLAN`, critique `OK` / `INSUFFISANT: <reason>`) with structured Pydantic schemas.
 
 ---
 
