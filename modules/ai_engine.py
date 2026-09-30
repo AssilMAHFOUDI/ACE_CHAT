@@ -7,6 +7,7 @@ from google.genai import types
 
 from modules.config import (
     AGENT_CRITIQUE_ACTIVEE,
+    AGENT_FLUX_ACTIVE,
     AGENT_PLAN_ACTIVEE,
     CHAT_MODEL,
     EMBEDDING_MODEL,
@@ -14,10 +15,13 @@ from modules.config import (
     STAGNATION_MAX_APPELS_IDENTIQUES,
 )
 from modules.reflexion import (
-    construire_plan,
+    MARQUEUR_REPONSE,
+    PROMPT_PLAN,
+    Planification,
+    analyser_planification,
     evaluer_brouillon,
     formater_observations,
-    merite_un_plan,
+    retirer_marqueur,
 )
 from modules.tools import calculatrice, meteo, recherche_web
 
@@ -72,6 +76,88 @@ def _cle_appel(nom, arguments):
     return f"{nom} {args}"
 
 
+class _ReponseFlux:
+    """Réponse reconstruite à partir des morceaux d'un flux.
+
+    Elle n'expose que ce que la boucle ReAct consomme (`text`, `function_calls`) :
+    inutile de reconstruire les objets du SDK, et le flux devient testable avec
+    des morceaux factices.
+    """
+
+    def __init__(self, texte, appels):
+        self.text = texte
+        self.function_calls = appels
+
+
+def _envoyer(session, message, texte_callback=None, config=None):
+    """Envoie un message à une session et renvoie la réponse complète.
+
+    Sans `texte_callback`, l'appel est un `send_message` classique : rien n'est
+    publié avant la réponse entière. Avec, la réponse est lue en flux et le texte
+    déjà reçu est publié au fur et à mesure ; le callback reçoit le texte
+    **accumulé du tour courant**, et un texte vide signifie « efface » (le tour a
+    débouché sur un appel d'outil : son texte d'accompagnement n'est pas la
+    réponse).
+
+    La réponse renvoyée porte la même information qu'une réponse d'un seul bloc :
+    la boucle ReAct n'a donc rien à savoir du mode d'envoi.
+    """
+    if texte_callback is None:
+        return session.send_message(message, config=config)
+
+    textes = []
+    appels = []
+    for morceau in session.send_message_stream(message, config=config):
+        if morceau.text:
+            textes.append(morceau.text)
+        appels.extend(morceau.function_calls or [])
+        texte_callback("" if appels else "".join(textes))
+
+    return _ReponseFlux("".join(textes), appels)
+
+
+def _planifier(client, history, question, texte_callback=None):
+    """Établit le plan, ou récupère la réponse directe du planificateur.
+
+    Le planificateur travaille dans sa propre session, outils coupés : il ne fait
+    qu'arbitrer entre « je réponds » et « voici les étapes ». Le flux est routé au
+    fil de l'eau : une réponse directe est publiée immédiatement (sans son
+    marqueur), un plan n'est jamais publié comme réponse.
+
+    Une panne n'interdit pas de répondre : elle renvoie une planification vide et
+    l'agent agit alors seul (fail-open).
+    """
+
+    def router(texte_partiel):
+        # Le plan est une étape de raisonnement, pas une réponse : tant que le
+        # flux n'a pas désigné une réponse directe, la zone de réponse reste vide.
+        if texte_callback is None:
+            return
+        marqueur, corps = retirer_marqueur(texte_partiel)
+        texte_callback(corps if marqueur == MARQUEUR_REPONSE else "")
+
+    # La session reçoit une copie de l'historique : le planificateur hérite du
+    # contexte de la conversation (indispensable pour juger une question de
+    # suivi) sans polluer la session de l'agent, qui partagera la liste d'origine.
+    chat_plan = client.chats.create(
+        model=CHAT_MODEL, history=list(history or []), config=CONFIG_SANS_OUTILS
+    )
+    invite = f"{PROMPT_PLAN}\n\nQuestion : {question}"
+
+    try:
+        reponse = _envoyer(chat_plan, invite, texte_callback=router)
+    except Exception as erreur:
+        logger.warning("Échec du plan (%s) : l'agent agit sans plan.", erreur)
+        if texte_callback:
+            texte_callback("")
+        return Planification()
+
+    texte = reponse.text or ""
+    if texte_callback:
+        router(texte)  # état final : publie la réponse, efface un flux d'étape
+    return analyser_planification(texte)
+
+
 def init_ai_client(api_key):
     return genai.Client(api_key=api_key)
 
@@ -84,8 +170,13 @@ def format_history_for_gemini(st_messages):
     return gemini_history
 
 
-# 💡 NOUVEAU : Ajout du paramètre status_callback
-def get_ai_response(client, gemini_history, status_callback=None):
+def get_ai_response(client, gemini_history, status_callback=None, texte_callback=None):
+    """Répond à la dernière question de l'historique, planification comprise.
+
+    `status_callback` reçoit les étapes de raisonnement (ce que fait l'agent),
+    `texte_callback` reçoit le texte de la réponse au fur et à mesure. Sans lui,
+    ou si AGENT_FLUX_ACTIVE est coupé, la réponse est livrée d'un seul bloc.
+    """
     last_msg = gemini_history[-1]
     latest_user_message = last_msg["parts"][0]["text"]
     history_for_session = gemini_history[:-1]
@@ -108,6 +199,11 @@ def get_ai_response(client, gemini_history, status_callback=None):
         """Fait défiler une étape dans la zone de statut de l'interface."""
         if status_callback:
             status_callback(message)
+
+    # Le flux n'est publié que si l'interface le demande et que le drapeau
+    # l'autorise : sans callback, la réponse est livrée d'un seul bloc, comme
+    # avant.
+    publier_flux = texte_callback if AGENT_FLUX_ACTIVE else None
 
     def synthese_forcee(motif):
         """Contraint le modèle à conclure, outils coupés, avec le rappel des faits.
@@ -135,7 +231,13 @@ def get_ai_response(client, gemini_history, status_callback=None):
 
         try:
             texte = (
-                chat_session.send_message(message, config=CONFIG_SANS_OUTILS).text or ""
+                _envoyer(
+                    chat_session,
+                    message,
+                    texte_callback=publier_flux,
+                    config=CONFIG_SANS_OUTILS,
+                ).text
+                or ""
             ).strip()
         except Exception as err_synthese:
             logger.error("Échec de la synthèse forcée : %s", err_synthese)
@@ -147,25 +249,34 @@ def get_ai_response(client, gemini_history, status_callback=None):
             "*(Note : Cette réponse est une synthèse établie après avoir atteint la limite de recherche.)*"
         )
 
-    # Plan d'attaque : une étape de stratégie avant d'agir. Elle coûte un appel,
-    # donc seulement pour les questions longues ou à plusieurs voix (jamais pour
-    # un « bonjour »). Le chat dédié, historique vide et outils coupés, évite de
-    # polluer la session de l'agent avec un aller-retour purement préparatoire.
+    # Planification : elle est systématique et précède la boucle. Le
+    # planificateur peut aussi répondre directement, quand la réponse se trouve
+    # déjà dans la question ou dans le contexte fourni : la boucle ne s'ouvre
+    # alors pas du tout et la question ne coûte qu'un appel.
     question_initiale = latest_user_message
     plan = None
-    if AGENT_PLAN_ACTIVEE and merite_un_plan(question_initiale):
-        notifier("🗺️ Préparation d'un plan de recherche...")
-        chat_plan = client.chats.create(
-            model=CHAT_MODEL, history=[], config=CONFIG_SANS_OUTILS
+    if AGENT_PLAN_ACTIVEE:
+        notifier("🧠 Création du plan de réponse...")
+        planification = _planifier(
+            client,
+            history_for_session,
+            question_initiale,
+            texte_callback=publier_flux,
         )
-        plan = construire_plan(
-            question_initiale, lambda invite: chat_plan.send_message(invite).text
-        )
+        if planification.reponse:
+            notifier("💬 Réponse directe : aucun outil n'était nécessaire.")
+            logger.info("Le planificateur a répondu directement à la question.")
+            return planification.reponse
+
+        plan = planification.plan
         if plan:
             notifier(f"🗺️ Plan retenu :\n{plan}")
             latest_user_message = (
                 f"[Plan à suivre]\n{plan}\n\nQuestion : {question_initiale}"
             )
+        else:
+            notifier("🗺️ Aucun plan retenu : l'agent décide seul.")
+            logger.info("Planificateur sans verdict : l'agent décide seul.")
 
     logger.info("Démarrage d'une nouvelle session Agent ReAct.")
     chat_session = client.chats.create(
@@ -186,7 +297,7 @@ def get_ai_response(client, gemini_history, status_callback=None):
 
         notifier(f"🔄 Analyse et réflexion (Étape {iteration + 1})...")
 
-        response = chat_session.send_message(current_message)
+        response = _envoyer(chat_session, current_message, texte_callback=publier_flux)
 
         if response.function_calls:
             # Dernière itération autorisée : on force l'agent à synthétiser au
@@ -300,7 +411,10 @@ def get_ai_response(client, gemini_history, status_callback=None):
                             "déjà obtenues, en appelant l'outil qui manque au besoin."
                         )
                         continue
-                notifier("💬 Rédaction de la réponse finale...")
+                if publier_flux is None:
+                    # La réponse part d'un bloc : on annonce sa rédaction. En
+                    # flux, elle s'écrit déjà sous les yeux de l'utilisateur.
+                    notifier("💬 Rédaction de la réponse finale...")
                 logger.info(
                     "L'Agent a terminé son raisonnement et fournit une réponse."
                 )

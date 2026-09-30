@@ -12,7 +12,11 @@ from modules.ai_engine import (
     init_ai_client,
 )
 from modules.config import CHAT_MODEL, MAX_ITERATIONS
-from tests.conftest import reponse_finale, reponse_outil
+from tests.conftest import (
+    reponse_finale,
+    reponse_outil,
+    reponse_texte_et_outil,
+)
 
 
 def _histoire(question="ma question"):
@@ -387,33 +391,44 @@ def test_auto_critique_en_panne_n_empeche_pas_de_repondre(monkeypatch, ia):
     assert get_ai_response(ia, _histoire()) == "Le résultat est 4."
 
 
-# --- Plan initial ------------------------------------------------------------
+# --- Planification systématique ----------------------------------------------
 
 
-def test_question_courte_ne_declenche_aucun_chat_de_plan(monkeypatch, ia):
-    # Le plan coûte un appel : une question triviale ne doit créer qu'une seule
-    # session (celle de l'agent) et qu'un seul envoi, même drapeau activé.
+def test_planification_systematique_meme_pour_une_question_courte(monkeypatch, ia):
+    # La planification précède toujours la boucle : même « bonjour » passe par le
+    # planificateur, qui peut alors répondre directement (voir plus bas).
     monkeypatch.setattr(engine, "AGENT_PLAN_ACTIVEE", True)
-    ia.chats.reponses = [reponse_finale("Bonjour.")]
-    assert get_ai_response(ia, _histoire()) == "Bonjour."
-    assert len(ia.chats.chats_crees) == 1
-    assert len(ia.chats.dernier.envoyes) == 1
+    ia.chats.reponses = [
+        reponse_finale("PLAN\n1. Saluer\n2. Répondre"),
+        reponse_finale("Bonjour !"),
+    ]
+    statuts = []
+    assert get_ai_response(ia, _histoire(), status_callback=statuts.append) == (
+        "Bonjour !"
+    )
+    chat_plan, chat_agent = ia.chats.chats_crees
+    # Outils coupés dès la création de la session de planification.
+    assert ia.chats.appels[0]["config"] is engine.CONFIG_SANS_OUTILS
+    assert chat_plan.envoyes[0].startswith("Tu es le planificateur")
+    assert "1. Saluer" in chat_agent.envoyes[0]
+    assert any("Création du plan de réponse" in s for s in statuts)
 
 
 def test_plan_non_active_ne_coute_aucun_appel(monkeypatch, ia):
-    # Drapeau retiré : la boucle ReAct tourne exactement comme avant la Phase C.
+    # Drapeau retiré (interrupteur utilisé par les tests) : la boucle agit seule.
     monkeypatch.setattr(engine, "AGENT_PLAN_ACTIVEE", False)
     ia.chats.reponses = [reponse_finale("Réponse directe.")]
     assert get_ai_response(ia, _histoire(_question_longue())) == "Réponse directe."
     assert len(ia.chats.chats_crees) == 1
 
 
-def test_question_longue_est_planifiee_dans_une_session_isoallee(monkeypatch, ia):
-    # Le plan se prépare dans un chat vierge (aucun historique) et outils coupés,
-    # pour ne pas polluer la session de l'agent avec un aller-retour préparatoire.
+def test_le_planificateur_partage_le_contexte_sans_le_polluer(monkeypatch, ia):
+    # Le planificateur voit la conversation (indispensable pour juger un suivi),
+    # mais dans sa propre copie : son aller-retour ne s'ajoute pas à la session de
+    # l'agent, qui garde l'historique d'origine.
     monkeypatch.setattr(engine, "AGENT_PLAN_ACTIVEE", True)
     ia.chats.reponses = [
-        reponse_finale("1. Collecter\n2. Conclure"),
+        reponse_finale("PLAN\n1. Collecter\n2. Conclure"),
         reponse_finale("Réponse finale."),
     ]
     statuts = []
@@ -421,11 +436,14 @@ def test_question_longue_est_planifiee_dans_une_session_isoallee(monkeypatch, ia
         ia, _histoire(_question_longue()), status_callback=statuts.append
     ) == ("Réponse finale.")
     chat_plan, chat_agent = ia.chats.chats_crees
+    plan_histoire = ia.chats.appels[0]["history"]
+    agent_histoire = ia.chats.appels[1]["history"]
+    assert plan_histoire == agent_histoire  # même contexte...
+    assert plan_histoire is not agent_histoire  # ...mais listes distinctes
+    assert ia.chats.appels[0]["config"] is engine.CONFIG_SANS_OUTILS
     # Outils coupés dès la création : aucune config repassée aux envois du plan.
     assert chat_plan.configs == [None]
-    assert ia.chats.appels[0]["history"] == []
-    assert ia.chats.appels[0]["config"] is engine.CONFIG_SANS_OUTILS
-    assert chat_plan.envoyes[0].startswith("Tu prépares le plan")
+    assert chat_plan.envoyes[0].startswith("Tu es le planificateur")
     assert any("Plan retenu" in s for s in statuts)
     # Le plan est rappelé dans la première question de l'agent, qui garde la sienne.
     premiere_question = chat_agent.envoyes[0]
@@ -434,23 +452,48 @@ def test_question_longue_est_planifiee_dans_une_session_isoallee(monkeypatch, ia
     assert _question_longue() in premiere_question
 
 
-def test_question_jugee_simple_part_sans_plan(monkeypatch, ia):
-    # Le modèle rend le marqueur attendu : rien n'est injecté, la question
-    # d'origine est envoyée telle quelle.
+def test_le_planificateur_repond_directement_sans_ouvrir_la_boucle(monkeypatch, ia):
+    # Le planificateur a la réponse : elle est rendue telle quelle, sans seconde
+    # session ni boucle ReAct. La question ne coûte qu'un appel.
     monkeypatch.setattr(engine, "AGENT_PLAN_ACTIVEE", True)
-    question = _question_longue()
-    ia.chats.reponses = [reponse_finale("PLAN SIMPLE"), reponse_finale("Réponse.")]
+    ia.chats.reponses = [reponse_finale("REPONSE\nBonjour !")]
     statuts = []
-    assert get_ai_response(ia, _histoire(question), status_callback=statuts.append) == (
+    assert get_ai_response(ia, _histoire(), status_callback=statuts.append) == (
+        "Bonjour !"
+    )
+    assert len(ia.chats.chats_crees) == 1
+    assert any("Réponse directe" in s for s in statuts)
+
+
+def test_reponse_directe_publiee_en_flux_sans_son_marqueur(monkeypatch, ia):
+    # La réponse directe s'écrit au fil de l'eau : le marqueur du protocole ne
+    # doit jamais apparaître à l'écran.
+    monkeypatch.setattr(engine, "AGENT_PLAN_ACTIVEE", True)
+    ia.chats.reponses = [reponse_finale("REPONSE : 2 + 2 = 4")]
+    publies = []
+    assert get_ai_response(ia, _histoire(), texte_callback=publies.append) == (
+        "2 + 2 = 4"
+    )
+    assert publies[-1] == "2 + 2 = 4"
+    assert not any("REPONSE" in texte for texte in publies)
+
+
+def test_planificateur_sans_verdict_l_agent_agit_seul(monkeypatch, ia):
+    # Sortie vide : ni plan ni réponse. Le statut le dit, et la question part
+    # inchangée vers la boucle.
+    monkeypatch.setattr(engine, "AGENT_PLAN_ACTIVEE", True)
+    ia.chats.reponses = [reponse_finale(""), reponse_finale("Réponse.")]
+    statuts = []
+    assert get_ai_response(ia, _histoire(), status_callback=statuts.append) == (
         "Réponse."
     )
-    assert ia.chats.chats_crees[1].envoyes[0] == question
-    assert not any("Plan retenu" in s for s in statuts)
+    assert any("Aucun plan retenu" in s for s in statuts)
+    assert ia.chats.chats_crees[1].envoyes[0] == "ma question"
 
 
-def test_panne_du_plan_n_empeche_pas_de_repondre(monkeypatch, ia):
+def test_panne_du_planificateur_n_empeche_pas_de_repondre(monkeypatch, ia):
     # La session de planification tombe en panne : l'échec est absorbé et l'agent
-    # agit quand même, sans plan.
+    # agit quand même, sans plan et sans réponse directe.
     monkeypatch.setattr(engine, "AGENT_PLAN_ACTIVEE", True)
     vrai_create = ia.chats.create
 
@@ -459,13 +502,21 @@ def test_panne_du_plan_n_empeche_pas_de_repondre(monkeypatch, ia):
 
     def create_avec_panne(model, history, config):
         chat = vrai_create(model, history, config)
-        if not history:  # session de planification : vierge de tout historique
-            chat.send_message = echouer
+        if len(ia.chats.chats_crees) == 1:  # première session : le planificateur
+            chat.send_message_stream = echouer
         return chat
 
     monkeypatch.setattr(ia.chats, "create", create_avec_panne)
     ia.chats.reponses = [reponse_finale("Réponse sans plan.")]
-    assert get_ai_response(ia, _histoire(_question_longue())) == "Réponse sans plan."
+    publies = []
+    assert (
+        get_ai_response(
+            ia, _histoire(_question_longue()), texte_callback=publies.append
+        )
+        == "Réponse sans plan."
+    )
+    # La panne efface la zone de réponse, au cas où un plan s'y était glissé.
+    assert "" in publies
     # La question part telle quelle : aucun plan n'a été ajouté au message.
     assert ia.chats.chats_crees[1].envoyes[0] == _question_longue()
 
@@ -509,3 +560,115 @@ def test_synthese_forcee_rappelle_le_plan(monkeypatch, ia):
     # Le plan vit dans sa propre session : la boucle de l'agent n'a pas grossi.
     # MAX_ITERATIONS envois d'agent + 1 envoi de synthèse forcée.
     assert len(ia.chats.dernier.envoyes) == MAX_ITERATIONS + 1
+
+
+# --- Réponse publiée au fil de l'eau -----------------------------------------
+
+
+def test_envoyer_sans_callback_livre_la_reponse_d_un_bloc(ia):
+    # Sans callback, l'envoi reste un send_message : c'est le chemin de tous les
+    # tests qui ne s'intéressent pas au flux.
+    ia.chats.reponses = [reponse_finale("Bonjour !")]
+    chat = ia.chats.create(model=CHAT_MODEL, history=[], config=None)
+    reponse = engine._envoyer(chat, "question")
+    assert reponse.text == "Bonjour !"
+    assert chat.envoyes == ["question"]
+    assert chat.configs == [None]
+
+
+def test_envoyer_agrege_les_morceaux_du_flux(ia):
+    # La réponse reconstruite porte la même information qu'une réponse d'un bloc :
+    # c'est ce qui permet à la boucle d'ignorer le mode d'envoi.
+    ia.chats.reponses = [reponse_finale("Bonjour tout le monde")]
+    chat = ia.chats.create(model=CHAT_MODEL, history=[], config=None)
+    publies = []
+    reponse = engine._envoyer(chat, "question", texte_callback=publies.append)
+    assert reponse.text == "Bonjour tout le monde"
+    assert reponse.function_calls == []
+    # Plusieurs morceaux, et chaque état publié prolonge le précédent.
+    assert len(publies) > 1
+    assert all(
+        avant == apres[: len(avant)]
+        for avant, apres in zip(publies, publies[1:], strict=False)
+    )
+    assert publies[-1] == "Bonjour tout le monde"
+
+
+def test_envoyer_agrege_un_appel_d_outil(ia):
+    ia.chats.reponses = [reponse_outil("meteo", {"ville": "Paris"})]
+    chat = ia.chats.create(model=CHAT_MODEL, history=[], config=None)
+    publies = []
+    reponse = engine._envoyer(chat, "question", texte_callback=publies.append)
+    assert reponse.text == ""
+    assert reponse.function_calls[0].name == "meteo"
+    assert reponse.function_calls[0].args == {"ville": "Paris"}
+    # Aucun texte à montrer : la zone de réponse est effacée.
+    assert publies == [""]
+
+
+def test_le_texte_est_publie_au_fil_de_l_eau(ia):
+    ia.chats.reponses = [reponse_finale("Le résultat est quatre.")]
+    publies = []
+    statuts = []
+    assert (
+        get_ai_response(
+            ia,
+            _histoire(),
+            status_callback=statuts.append,
+            texte_callback=publies.append,
+        )
+        == "Le résultat est quatre."
+    )
+    assert publies[-1] == "Le résultat est quatre."
+    # En flux, la rédaction n'est plus annoncée : elle se voit à l'écran.
+    assert not any("Rédaction" in s for s in statuts)
+
+
+def test_le_texte_d_un_tour_d_outil_est_efface(monkeypatch, ia):
+    # Le modèle annonce une action puis appelle l'outil : ce texte n'est pas la
+    # réponse, la zone doit être vidée avant que la vraie réponse n'arrive.
+    monkeypatch.setitem(engine.AVAILABLE_TOOLS, "meteo", lambda ville: "22°C")
+    ia.chats.reponses = [
+        reponse_texte_et_outil("Je vérifie la météo.", "meteo", {"ville": "Paris"}),
+        reponse_finale("Il fait 22°C à Paris."),
+    ]
+    publies = []
+    assert get_ai_response(ia, _histoire(), texte_callback=publies.append) == (
+        "Il fait 22°C à Paris."
+    )
+    assert "Je vérifie la météo." in publies  # publié...
+    assert "" in publies  # ...puis effacé (le tour était un tour d'outil)
+    assert publies[-1] == "Il fait 22°C à Paris."
+
+
+def test_flux_coupe_par_le_drapeau(monkeypatch, ia):
+    # Valeur de sécurité : flux coupé, la réponse arrive d'un bloc et la rédaction
+    # est de nouveau annoncée dans le statut.
+    monkeypatch.setattr(engine, "AGENT_FLUX_ACTIVE", False)
+    ia.chats.reponses = [reponse_finale("Bonjour !")]
+    publies = []
+    statuts = []
+    assert (
+        get_ai_response(
+            ia,
+            _histoire(),
+            status_callback=statuts.append,
+            texte_callback=publies.append,
+        )
+        == "Bonjour !"
+    )
+    assert publies == []
+    assert any("Rédaction" in s for s in statuts)
+
+
+def test_la_synthese_forcee_est_publiee_en_flux(ia):
+    # La réponse de secours s'écrit elle aussi au fil de l'eau : la zone ne doit
+    # pas se figer puis se remplir d'un coup.
+    ia.chats.reponses = [
+        reponse_outil("calculatrice", {"expression": f"{i} + 1"})
+        for i in range(MAX_ITERATIONS)
+    ] + [reponse_finale("Synthèse finale.")]
+    publies = []
+    texte = get_ai_response(ia, _histoire(), texte_callback=publies.append)
+    assert "Synthèse finale." in texte
+    assert any("Synthèse finale." in etat for etat in publies)

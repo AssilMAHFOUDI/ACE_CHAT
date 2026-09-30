@@ -28,11 +28,13 @@ def test_modeles_declarés():
 
 
 def test_constantes_de_reflexion():
-    # Une question courte ne doit jamais payer un appel de planification.
+    # La planification est systématique ; le flux est actif en production.
     assert config.AGENT_PLAN_ACTIVEE is True
     assert config.AGENT_CRITIQUE_ACTIVEE is True
-    assert config.PLAN_SEUIL_CARACTERES > 20
+    assert config.AGENT_FLUX_ACTIVE is True
     assert config.PLAN_MAX_CHARS == 500
+    # La lecture du marqueur doit trancher tôt : elle retarde le premier mot.
+    assert 0 < config.PLAN_MARQUEUR_MAX_CHARS <= 40
     # La raison rendue à l'agent reste plus courte que la réponse jugée.
     assert config.CRITIQUE_MAX_CHARS < config.CRITIQUE_BROUILLON_MAX_CHARS
     # Une seule répétition tolérée : la seconde est tenue pour un blocage.

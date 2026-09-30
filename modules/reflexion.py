@@ -2,8 +2,9 @@
 
 La boucle ReAct de `modules.ai_engine` agit dès le premier tour : elle ne
 s'interroge ni sur la stratégie à suivre, ni sur la qualité de ce qu'elle
-produit. Ce module apporte les briques de ce contrôle : le plan avant d'agir,
-la critique de la réponse avant de l'envoyer, et le formatage des observations.
+produit. Ce module apporte les briques de ce contrôle : la planification qui
+précède la boucle (et qui peut répondre directement quand elle a la réponse), la
+critique de la réponse avant de l'envoyer, et le formatage des observations.
 
 Il n'appelle jamais le modèle lui-même : l'appel est fourni par l'appelant
 (`appeler_modele`), ce qui rend toute cette logique testable sans réseau ni
@@ -14,32 +15,47 @@ non dans `services` pour que le sens de dépendance reste unique
 """
 
 import logging
+from dataclasses import dataclass
 
 from modules.config import (
     CRITIQUE_BROUILLON_MAX_CHARS,
     CRITIQUE_MAX_CHARS,
     OBSERVATIONS_MAX_CHARS,
+    PLAN_MARQUEUR_MAX_CHARS,
     PLAN_MAX_CHARS,
-    PLAN_SEUIL_CARACTERES,
 )
 
 logger = logging.getLogger(__name__)
 
-# Réponse exigée du modèle quand la question ne mérite aucune planification.
-PLAN_SIMPLE = "PLAN SIMPLE"
+# Marqueurs exigés en première ligne de la réponse du planificateur : soit une
+# réponse directe, soit un plan à suivre. Le protocole est volontairement
+# textuel (plutôt qu'un JSON) : il tient dans un appel outils coupés, se lit en
+# flux et se teste sans schéma.
+MARQUEUR_PLAN = "PLAN"
+MARQUEUR_REPONSE = "REPONSE"
 
-# Préfixes tenant lieu de verdict négatif. Le protocole est volontairement
-# textuel (plutôt qu'un JSON) : il tient dans un appel outils coupés et se
-# teste sans schéma. Tout le reste est lu comme une validation (fail-open).
+# Décors tolérés en tête de la réponse : markdown, ponctuation, séparateurs.
+DECORS = " \t\r\n#*-_.:>\"'"
+
+# Préfixes tenant lieu de verdict négatif. Tout le reste est lu comme une
+# validation (fail-open).
 PREFIXES_REFUS = ("INSUFFISANT", "NON")
 
 PROMPT_PLAN = (
-    "Tu prépares le plan d'une aide qui répondra ensuite à la question posée, "
-    "outils compris (calculatrice, météo, recherche web). Écris entre 2 et 4 "
-    "étapes numérotées, une par ligne, au format « 1. ... ». Chaque étape dit "
-    "quoi collecter ou calculer, sans jamais répondre à la question. Si la "
-    "question se traite d'une seule traite, sans étape intermédiaire, réponds "
-    f"uniquement : {PLAN_SIMPLE}."
+    "Tu es le planificateur d'une aide qui répondra ensuite à la question, "
+    "outils compris (calculatrice, météo, recherche web). Ta réponse commence "
+    f"toujours par une première ligne contenant uniquement {MARQUEUR_REPONSE} "
+    f"ou {MARQUEUR_PLAN}.\n"
+    f"- {MARQUEUR_REPONSE} : la réponse se trouve entièrement dans les échanges "
+    "fournis ou dans la question elle-même (salutation, question de culture "
+    "générale, calcul mental, demande de reformulation, suivi immédiat). "
+    "Écris alors la réponse complète et définitive à l'utilisateur, juste après "
+    "cette ligne.\n"
+    f"- {MARQUEUR_PLAN} : la réponse exige une source extérieure (web, météo, "
+    "document) ou plusieurs étapes enchaînées. Écris alors, une par ligne, de 2 "
+    "à 4 étapes numérotées au format « 1. ... ». Chaque étape dit quoi "
+    "collecter ou calculer, sans jamais répondre à la question.\n"
+    f"Dans le doute, écris {MARQUEUR_PLAN}."
 )
 
 PROMPT_CRITIQUE = (
@@ -83,41 +99,84 @@ def formater_observations(observations):
     return "\n".join(blocs)
 
 
-def merite_un_plan(question):
-    """Vrai si la question est assez longue ou multiple pour justifier un plan.
+@dataclass(frozen=True)
+class Planification:
+    """Verdict du planificateur : un plan à suivre, ou une réponse directe.
 
-    Le plan coûte un appel de modèle supplémentaire : il est réservé aux
-    questions qui en ont besoin (longues, ou à plusieurs voix), jamais au
-    « bonjour » d'ouverture ni à la question triviale.
+    Les deux champs sont exclusifs. Vides tous les deux, la planification n'a
+    rien apporté : l'agent décide alors seul.
     """
-    nette = (question or "").strip()
-    if not nette:
-        return False
-    return len(nette) >= PLAN_SEUIL_CARACTERES or nette.count("?") >= 2
+
+    plan: str | None = None
+    reponse: str | None = None
 
 
-def construire_plan(question, appeler_modele):
-    """Établit le plan de recherche, ou None si la question n'en mérite pas.
+def marqueur_en_tete(texte, definitif=False):
+    """Lit le marqueur en tête du texte : réponse directe, plan, ou rien.
 
-    `appeler_modele` est la fonction qui envoie un texte au modèle et renvoie sa
-    réponse. Une panne de cet appel n'interdit pas de répondre : elle supprime
-    seulement le plan (fail-open).
+    Les morceaux arrivent un par un : tant que la première ligne n'est pas close
+    (ni terminée par un retour à la ligne, ni assez longue pour trancher), la
+    lecture reste indécise et renvoie None. Le flux est alors retenu : il ne doit
+    jamais publier un plan comme s'il s'agissait d'une réponse. `definitif` force
+    la lecture sur le texte reçu, quel qu'en soit l'état.
+
+    Par défaut c'est MARQUEUR_PLAN : un texte inattendu conduit à la boucle
+    ReAct, jamais à une réponse tronquée.
     """
-    nette = (question or "").strip()
-    if not nette:
+    net = (texte or "").lstrip(DECORS)
+    if not net:
         return None
+    fin = net.find("\n")
+    if fin == -1 and len(net) < PLAN_MARQUEUR_MAX_CHARS and not definitif:
+        return None
+    ligne = (net if fin == -1 else net[:fin]).upper()
+    return MARQUEUR_REPONSE if MARQUEUR_REPONSE in ligne else MARQUEUR_PLAN
 
-    try:
-        invite = f"{PROMPT_PLAN}\n\nQuestion : {nette}"
-        reponse = (appeler_modele(invite) or "").strip()
-    except Exception as erreur:
-        logger.warning("Échec du plan initial (%s) : l'agent agit sans plan.", erreur)
-        return None
 
-    if not reponse or reponse.upper().startswith(PLAN_SIMPLE):
-        logger.info("Question jugée simple : aucun plan calculé.")
-        return None
-    return _tronquer(reponse, PLAN_MAX_CHARS)
+def retirer_marqueur(texte):
+    """Sépare le texte en (marqueur, corps), le marqueur retiré du corps.
+
+    Le retrait ne touche que la ligne du marqueur : « REPONSE : Bonjour » laisse
+    « Bonjour », « PLAN » suivi des étapes laisse les étapes. Sans marqueur, tout
+    le texte fait corps (et sera lu comme un plan).
+    """
+    net = (texte or "").strip()
+    if not net:
+        return None, ""
+
+    marqueur = marqueur_en_tete(net, definitif=True)
+    fin = net.find("\n")
+    premiere = net if fin == -1 else net[:fin]
+    reste = "" if fin == -1 else net[fin + 1 :]
+    haut = premiere.upper()
+
+    if MARQUEUR_REPONSE in haut:
+        # « REPONSE : la suite » : la suite appartient déjà à la réponse.
+        debut = haut.find(MARQUEUR_REPONSE) + len(MARQUEUR_REPONSE)
+        amorce = premiere[debut:].lstrip(DECORS)
+        return marqueur, "\n".join(partie for partie in (amorce, reste) if partie)
+    if MARQUEUR_PLAN in haut:
+        return marqueur, reste
+    return marqueur, net
+
+
+def analyser_planification(texte):
+    """Interprète la réponse du planificateur : plan ou réponse directe.
+
+    Un texte vide, ou réduit à son marqueur, ne renvoie rien : l'agent agit seul
+    (fail-open). Un plan est borné à PLAN_MAX_CHARS ; une réponse directe est
+    rendue telle quelle, car c'est elle que verra l'utilisateur.
+    """
+    if not (texte or "").strip():
+        return Planification()
+
+    marqueur, corps = retirer_marqueur(texte)
+    corps = corps.strip()
+    if not corps:
+        return Planification()
+    if marqueur == MARQUEUR_REPONSE:
+        return Planification(reponse=corps)
+    return Planification(plan=_tronquer(corps, PLAN_MAX_CHARS))
 
 
 def analyser_verdict(texte):

@@ -28,13 +28,21 @@ MAX_ITERATIONS = 10  # boucle raison/act bornée
 OBSERVATIONS_MAX_CHARS = 2000
 
 # --- Agent (Réflexion) ---
-# Une question coûte au pire MAX_ITERATIONS + 2 appels : un pour le plan (seule-
-# ment si la question le justifie), un pour l'auto-critique (seulement si des
-# outils ont été utilisés). Les deux appels sont faits outils coupés.
-AGENT_PLAN_ACTIVEE = True  # planification explicite avant la boucle ReAct
+# La planification est systématique : toute question passe d'abord par le
+# planificateur, qui rend soit un plan (2 à 4 étapes), soit directement la
+# réponse. Une question coûte donc au pire MAX_ITERATIONS + 3 appels : le plan,
+# la boucle, puis l'auto-critique si des outils ont été utilisés. Tous les
+# appels de réflexion sont faits outils coupés.
+AGENT_PLAN_ACTIVEE = True  # planification avant la boucle ReAct
 AGENT_CRITIQUE_ACTIVEE = True  # une auto-critique de la réponse finale
-PLAN_SEUIL_CARACTERES = 120  # question plus courte : aucun plan calculé
+# Réponse publiée au fil de l'eau (token par token) au lieu d'attendre le texte
+# complet. Valeur de sécurité : la couper rend le comportement d'avant.
+AGENT_FLUX_ACTIVE = True
 PLAN_MAX_CHARS = 500  # longueur maximale du plan injecté dans le prompt
+# Longueur maximale lue avant de trancher entre réponse directe et plan quand la
+# première ligne du planificateur ne se termine pas encore : borne l'attente
+# avant le premier mot publié.
+PLAN_MARQUEUR_MAX_CHARS = 24
 CRITIQUE_MAX_CHARS = 400  # longueur maximale de la raison rendue à l'agent
 CRITIQUE_BROUILLON_MAX_CHARS = 2000  # longueur maximale de la réponse à évaluer
 # Répétitions tolérées du même appel (même outil, mêmes arguments) avant de

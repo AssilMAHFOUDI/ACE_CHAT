@@ -196,6 +196,20 @@ class _Chat:
         self.configs.append(config)
         return self._reponses.pop(0)
 
+    def send_message_stream(self, message, config=None):
+        """Même réponse que `send_message`, mais livrée morceau par morceau.
+
+        Le texte est découpé par mots et l'appel d'outil arrive seul dans son
+        morceau, comme le fait l'API : le code testé doit donc agréger les
+        morceaux pour reconstruire la réponse complète.
+        """
+        reponse = self.send_message(message, config)
+        texte = getattr(reponse, "text", "") or ""
+        for morceau in re.findall(r"\S+\s*", texte):
+            yield SimpleNamespace(text=morceau, function_calls=None)
+        for appel in getattr(reponse, "function_calls", []) or []:
+            yield SimpleNamespace(text=None, function_calls=[appel])
+
 
 class _Chats:
     def __init__(self):
@@ -237,6 +251,17 @@ def reponse_outil(nom, args):
     """Réponse de modèle demandant un appel d'outil."""
     return SimpleNamespace(
         function_calls=[SimpleNamespace(name=nom, args=args)], text=""
+    )
+
+
+def reponse_texte_et_outil(texte, nom, args):
+    """Réponse qui annonce une action en texte **puis** demande un outil.
+
+    Cas réel fréquent (« Je vérifie la météo. ») : le texte du tour ne doit pas
+    rester affiché comme s'il s'agissait de la réponse.
+    """
+    return SimpleNamespace(
+        function_calls=[SimpleNamespace(name=nom, args=args)], text=texte
     )
 
 

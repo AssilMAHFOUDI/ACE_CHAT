@@ -1,8 +1,9 @@
-"""Tests de modules/reflexion.py (plan initial, auto-critique, observations).
+"""Tests de modules/reflexion.py (planification, auto-critique, observations).
 
-Ces briques n'appellent jamais le modèle elles-mêmes : la fonction d'appel est
-injectée, ce qui permet d'exercer chaque branche (plan retenu, question jugée
-simple, verdict illisible, panne réseau) sans réseau ni client Gemini.
+La planification se lit dans le texte rendu par le planificateur, la critique
+reçoit sa fonction d'appel injectée : chaque branche (plan, réponse directe,
+marqueur indécis, verdict illisible, panne réseau) s'exerce sans réseau ni
+client Gemini.
 """
 
 import pytest
@@ -11,18 +12,21 @@ from modules.config import (
     CRITIQUE_BROUILLON_MAX_CHARS,
     CRITIQUE_MAX_CHARS,
     OBSERVATIONS_MAX_CHARS,
+    PLAN_MARQUEUR_MAX_CHARS,
     PLAN_MAX_CHARS,
-    PLAN_SEUIL_CARACTERES,
 )
 from modules.reflexion import (
-    PLAN_SIMPLE,
+    MARQUEUR_PLAN,
+    MARQUEUR_REPONSE,
     PROMPT_CRITIQUE,
     PROMPT_PLAN,
+    Planification,
+    analyser_planification,
     analyser_verdict,
-    construire_plan,
     evaluer_brouillon,
     formater_observations,
-    merite_un_plan,
+    marqueur_en_tete,
+    retirer_marqueur,
 )
 
 
@@ -71,64 +75,96 @@ def test_formater_observations_tronque_les_plus_anciennes():
     assert len(rappel) <= OBSERVATIONS_MAX_CHARS + 120  # marge = marqueur
 
 
-# --- Choix de planifier ou non -----------------------------------------------
+# --- Lecture du marqueur du planificateur ------------------------------------
 
 
-def test_question_courte_ne_merite_aucun_plan():
-    # Le plan coûte un appel : une question simple doit rester sans plan.
-    assert merite_un_plan("Quel temps fait-il à Paris") is False
+def test_marqueur_indecis_tant_que_la_premiere_ligne_n_est_pas_close():
+    # Les morceaux arrivent un par un : tant que rien ne tranche, le flux reste
+    # retenu, sinon un plan serait publié comme s'il s'agissait d'une réponse.
+    assert marqueur_en_tete("") is None
+    assert marqueur_en_tete("   ") is None
+    assert marqueur_en_tete("REP") is None  # mot peut-être encore en cours
+    # Première ligne close : la lecture peut conclure.
+    assert marqueur_en_tete("REPONSE\nBonjour") == MARQUEUR_REPONSE
+    assert marqueur_en_tete("PLAN\n1. Chercher") == MARQUEUR_PLAN
 
 
-def test_question_a_deux_voix_merite_un_plan():
-    assert merite_un_plan("Quel temps fait-il à Paris ? Et à Madrid ?") is True
+def test_marqueur_tranche_quand_la_premiere_ligne_devient_trop_longue():
+    # Sans retour à la ligne, on n'attend pas indéfiniment : au-delà de la
+    # fenêtre de lecture, l'absence de REPONSE vaut plan.
+    assert marqueur_en_tete("x" * (PLAN_MARQUEUR_MAX_CHARS + 1)) == MARQUEUR_PLAN
+    assert marqueur_en_tete("1. Chercher et recouper", definitif=True) == MARQUEUR_PLAN
 
 
-def test_question_longue_merite_un_plan():
-    assert merite_un_plan("Analyse détaillée : " + "a" * PLAN_SEUIL_CARACTERES) is True
+def test_marqueur_tolere_les_decors_markdown():
+    # Le modèle décore parfois sa réponse : seuls la tête et le mot comptent.
+    assert marqueur_en_tete("**REPONSE** : Bonjour\nla suite") == MARQUEUR_REPONSE
+    assert marqueur_en_tete("# reponse directe\nBonjour") == MARQUEUR_REPONSE
 
 
-def test_question_vide_ou_absente_ne_merite_aucun_plan():
-    assert merite_un_plan("") is False
-    assert merite_un_plan("   ") is False
-    assert merite_un_plan(None) is False
+def test_marqueur_definitif_tranche_sur_le_texte_recu():
+    # Fin de flux : plus rien à attendre, il faut conclure sur ce qui est reçu.
+    assert marqueur_en_tete("REP", definitif=True) == MARQUEUR_PLAN
 
 
-# --- Plan initial ------------------------------------------------------------
+# --- Retrait du marqueur ------------------------------------------------------
 
 
-def test_question_vide_ne_declenche_aucun_appel_de_plan():
-    appeler = _appel_factice("1. quoi que ce soit")
-    assert construire_plan("   ", appeler) is None
-    assert appeler.invites == []  # aucun appel payé pour rien
+def test_le_marqueur_est_retire_de_la_reponse():
+    assert retirer_marqueur("REPONSE\nBonjour") == (MARQUEUR_REPONSE, "Bonjour")
+    assert retirer_marqueur("REPONSE : Bonjour") == (MARQUEUR_REPONSE, "Bonjour")
+    assert retirer_marqueur("PLAN\n1. Chercher") == (MARQUEUR_PLAN, "1. Chercher")
 
 
-def test_le_plan_est_renvoyet_et_la_question_est_transmise():
-    appeler = _appel_factice("1. Collecter\n2. Conclure")
-    plan = construire_plan("Compare les ventes de 2024 et 2025", appeler)
-    assert plan == "1. Collecter\n2. Conclure"
-    assert PROMPT_PLAN in appeler.invites[0]
-    assert "Question : Compare les ventes de 2024 et 2025" in appeler.invites[0]
+def test_texte_sans_marqueur_fait_corps():
+    # Un plan écrit sans marqueur reste un plan : tout le texte fait corps.
+    assert retirer_marqueur("1. Chercher\n2. Conclure") == (
+        MARQUEUR_PLAN,
+        "1. Chercher\n2. Conclure",
+    )
+    assert retirer_marqueur("") == (None, "")
 
 
-def test_question_jugee_simple_ne_produit_aucun_plan():
-    # Le modèle rend le marqueur attendu : la question se traite d'une seule
-    # traite, le plan n'a rien à apporter et ne sera pas injecté.
-    assert construire_plan("Bonjour", _appel_factice(PLAN_SIMPLE)) is None
-    assert construire_plan("Bonjour", _appel_factice(" plan simple ")) is None
+# --- Verdict du planificateur -------------------------------------------------
 
 
-def test_reponse_vide_du_modele_ne_produit_aucun_plan():
-    assert construire_plan("Une question", _appel_factice("   ")) is None
+def test_planification_vide_ne_donne_ni_plan_ni_reponse():
+    # Rien à exploiter : l'agent décide seul plutôt que de recevoir un plan vide.
+    assert analyser_planification("") == Planification()
+    assert analyser_planification("   ") == Planification()
+    assert analyser_planification("PLAN") == Planification()
+    assert analyser_planification("REPONSE") == Planification()
 
 
-def test_le_plan_est_tronque_a_la_longueur_maximale():
-    plan = construire_plan("Compare tout", _appel_factice("x" * (PLAN_MAX_CHARS + 200)))
+def test_plan_rendu_par_le_planificateur():
+    assert analyser_planification("PLAN\n1. Chercher\n2. Conclure") == Planification(
+        plan="1. Chercher\n2. Conclure"
+    )
+    assert analyser_planification("1. Chercher\n2. Conclure").plan == (
+        "1. Chercher\n2. Conclure"
+    )
+
+
+def test_reponse_directe_rendue_telle_quelle():
+    # Le planificateur a la réponse : elle part telle quelle, sans son marqueur.
+    assert analyser_planification("REPONSE\nBonjour !") == Planification(
+        reponse="Bonjour !"
+    )
+    assert analyser_planification("reponse : 2 + 2 = 4").reponse == "2 + 2 = 4"
+
+
+def test_plan_borne_a_la_longueur_maximale():
+    plan = analyser_planification("PLAN\n" + "x" * (PLAN_MAX_CHARS + 200)).plan
     assert len(plan) == PLAN_MAX_CHARS
     assert plan.endswith("…")
 
 
-def test_panne_d_appel_supprime_le_plan_sans_empecher_de_repondre():
-    assert construire_plan("Une question", _appel_explosif) is None
+def test_le_prompt_de_planification_annonce_les_deux_marqueurs():
+    # Le protocole repose entièrement sur ce prompt : les deux marqueurs et la
+    # consigne de repli doivent y figurer.
+    assert PROMPT_PLAN.startswith("Tu es le planificateur")
+    assert MARQUEUR_REPONSE in PROMPT_PLAN
+    assert MARQUEUR_PLAN in PROMPT_PLAN
 
 
 # --- Lecture du verdict ------------------------------------------------------
