@@ -47,6 +47,7 @@ ACE_CHAT/
     __init__.py
     config.py                   # centralised settings, logging setup, model names
     ai_engine.py                # Gemini client, ReAct loop, embeddings, RAG prompt
+    reflexion.py                # Reflection: plan, self-critique, observations (pure logic)
     database.py                 # Supabase connection, history CRUD, vector search
     document_processor.py       # Text extraction, chunking, vectorization
     tools.py                    # Tools exposed to Gemini (web, weather, calc)
@@ -116,16 +117,21 @@ send_message(current_message)
 The context sent to Gemini is kept under a hard limit by `services/memoire.py`,
 *before* `format_history_for_gemini()` runs:
 
-1. The last `MEMORY_WINDOW_SIZE` messages (6) are always kept verbatim.
+1. At least the last `MEMORY_WINDOW_SIZE` messages (6) are always kept
+   verbatim: the view handed to the model is never shorter than that window.
 2. When older messages fall out of that window, they are summarised into a short
    block (`MEMORY_SUMMARY_MAX_CHARS` characters) injected as a leading
    `[Résumé des échanges précédents]` turn.
-3. The summary is **incremental**: it is recomputed only when new messages spill
+3. A new summary is only paid for once `MEMORY_MIN_OVERFLOW` (4) more messages
+   have spilled out since the last one: until then those older messages are kept
+   verbatim, so the view is slightly longer than the window rather than paying a
+   call for one or two new messages - never shorter.
+4. The summary is **incremental**: it is recomputed only when new messages spill
    out of the window, and the previous summary is folded into that call, so a
    long conversation does not pay a full re-summarisation at every turn. The
    number of messages already covered is cached in `st.session_state`
    (`resume` / `resume_jusqua`) and cleared by the *Recommencer* button.
-4. If the summarisation call fails, the recent window is sent alone and the
+5. If the summarisation call fails, the recent window is sent alone and the
    cached index does not advance, so the same messages are summarised again on
    the next turn: nothing is silently dropped.
 
@@ -135,21 +141,25 @@ handed to the model is compressed.
 ### Reflection (plan, self-critique, stagnation)
 
 `modules/reflexion.py` holds the reflection logic. It never talks to Gemini
-itself: each helper receives a `appeler_modele` callable, which keeps the module
+itself: each helper receives an `appeler_modele` callable, which keeps the module
 pure, offline-testable, and reusable by any other interface.
 
 1. **Initial plan** (`AGENT_PLAN_ACTIVEE`, `PLAN_SEUIL_CARACTERES`, `PLAN_MAX_CHARS`).
-   A substantial question (long, or carrying several sub-questions) gets a 2-4
-   step plan. The plan is built in its own throwaway session (no history, tools
-   disabled), shown in the UI, prepended to the first agent message and recalled
+   Both reflection steps are **enabled by default** in `modules/config.py`; the
+   guards below are what keep trivial questions free. A substantial question
+   (long, or carrying several sub-questions) gets a 2-4 step plan. The plan is
+   built in its own throwaway session (no history, tools disabled), shown in the
+   UI, prepended to the first agent message and recalled
    in the forced synthesis. The model may answer `PLAN SIMPLE` when no plan is
    needed, in which case nothing is injected: a trivial question never pays for
    planning.
 2. **Bounded self-critique** (`AGENT_CRITIQUE_ACTIVEE`, `CRITIQUE_MAX_CHARS`,
    `CRITIQUE_BROUILLON_MAX_CHARS`). Once the agent holds a text answer *and* has
    collected observations, the draft is reviewed once against the question and
-   those observations. The model answers `OK` or `INSUFFISANT: <reason>`; a
-   refusal relaunches the agent with the reason (inside the same iteration
+   those observations (the recall sent to the model is capped by
+   `OBSERVATIONS_MAX_CHARS`, most recent observations first). The model answers
+   `OK` or `INSUFFISANT: <reason>`; a refusal relaunches the agent with the
+   reason (inside the same iteration
    budget). A plain chat answer that used no tool is never reviewed, and an
    unreadable verdict, an empty answer or a failing call all **accept the draft**:
    reflection can downgrade quality, never block a reply.
@@ -428,7 +438,7 @@ ruff format .           # formatting
    - The 🗑️ button deletes **only** that document.
    - *Recommencer la discussion* wipes the whole base and the chat history, then starts a new session.
 3. **Aim your question** with the **🔎 Chercher dans** selector: *📚 Tous les documents* (default) searches the whole base, or pick one document to restrict the search to it.
-4. **Ask a question** using the input bar at the bottom of the screen - it is embedded and the most relevant chunks are retrieved before the answer, which is followed by a `📎 Sources : ...` line.
+4. **Ask a question** using the input bar at the bottom of the screen - it is embedded and the most relevant chunks are retrieved before the answer, which is followed by a `📎 Sources : ...` line. Once the conversation is long enough to be compressed, a second caption (`🧠 Mémoire : n message(s) le plus ancien(s) résumé(s) pour cet appel.`) reports how many older messages were folded into the summary for that call.
 5. **Watch the agent work** - status boxes show each reasoning step and tool call live.
 6. **Reset** the conversation with the *Recommencer la discussion* button - this deletes chat history and document chunks and starts a new session.
 
