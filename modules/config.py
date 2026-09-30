@@ -27,6 +27,21 @@ MAX_ITERATIONS = 10  # boucle raison/act bornée
 # synthèse forcée (fin de boucle) : borne la taille du prompt.
 OBSERVATIONS_MAX_CHARS = 2000
 
+# --- Agent (Réflexion) ---
+# Une question coûte au pire MAX_ITERATIONS + 2 appels : un pour le plan (seule-
+# ment si la question le justifie), un pour l'auto-critique (seulement si des
+# outils ont été utilisés). Les deux appels sont faits outils coupés.
+AGENT_PLAN_ACTIVEE = True  # planification explicite avant la boucle ReAct
+AGENT_CRITIQUE_ACTIVEE = True  # une auto-critique de la réponse finale
+PLAN_SEUIL_CARACTERES = 120  # question plus courte : aucun plan calculé
+PLAN_MAX_CHARS = 500  # longueur maximale du plan injecté dans le prompt
+CRITIQUE_MAX_CHARS = 400  # longueur maximale de la raison rendue à l'agent
+CRITIQUE_BROUILLON_MAX_CHARS = 2000  # longueur maximale de la réponse à évaluer
+# Répétitions tolérées du même appel (même outil, mêmes arguments) avant de
+# conclure : au-delà, aucune requête réseau n'est retentée, le résultat déjà
+# obtenu est renvoyé et l'agent est invité à s'arrêter.
+STAGNATION_MAX_APPELS_IDENTIQUES = 1
+
 # --- Outils & Réseau ---
 # Timeout en secondes appliqué à CHAQUE appel réseau : 1 pour la recherche web,
 # 2 pour la météo (géocodage puis prévisions), soit 20 s au pire.
@@ -40,6 +55,11 @@ MEMORY_WINDOW_SIZE = 6
 # Longueur maximale du résumé qui remplace les messages plus anciens : borne la
 # taille du prompt, quelle que soit la durée de la conversation.
 MEMORY_SUMMARY_MAX_CHARS = 1500
+# Nombre minimal de messages qui doivent déborder depuis le dernier résumé pour
+# en déclencher un nouveau. Le premier débordement est toujours résumé ; les
+# suivants sont regroupés, sinon la conversation paie un appel de synthèse à
+# chaque tour pour 1 ou 2 messages ajoutés.
+MEMORY_MIN_OVERFLOW = 4
 
 
 # --- Modèles Gemini ---
