@@ -27,6 +27,25 @@ def test_modeles_declarés():
     assert config.EMBEDDING_DIMENSIONS == 3072
 
 
+def test_constantes_de_reflexion():
+    # Une question courte ne doit jamais payer un appel de planification.
+    assert config.AGENT_PLAN_ACTIVEE is True
+    assert config.AGENT_CRITIQUE_ACTIVEE is True
+    assert config.PLAN_SEUIL_CARACTERES > 20
+    assert config.PLAN_MAX_CHARS == 500
+    # La raison rendue à l'agent reste plus courte que la réponse jugée.
+    assert config.CRITIQUE_MAX_CHARS < config.CRITIQUE_BROUILLON_MAX_CHARS
+    # Une seule répétition tolérée : la seconde est tenue pour un blocage.
+    assert config.STAGNATION_MAX_APPELS_IDENTIQUES == 1
+
+
+def test_seuil_de_regroupement_de_la_memoire():
+    # Sans regroupement, la conversation paierait un résumé à chaque tour dès
+    # que la fenêtre est dépassée. Le seuil reste en deçà de la fenêtre.
+    assert config.MEMORY_MIN_OVERFLOW == 4
+    assert config.MEMORY_MIN_OVERFLOW <= config.MEMORY_WINDOW_SIZE
+
+
 def test_configurer_logging_appelle_basicconfig(monkeypatch):
     appels = {}
     monkeypatch.setattr(logging, "basicConfig", lambda **kwargs: appels.update(kwargs))

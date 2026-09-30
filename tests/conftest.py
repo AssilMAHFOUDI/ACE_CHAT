@@ -183,7 +183,11 @@ class _ModeleEmbed:
 
 class _Chat:
     def __init__(self, reponses):
-        self._reponses = list(reponses)
+        # La file est PARTAGÉE entre tous les chats d'un même test : derrière un
+        # scénario, un seul modèle répond à tous les appels (agent, plan,
+        # synthèse). Chaque send_message consomme donc la réponse suivante,
+        # quel que soit le chat qui l'émet.
+        self._reponses = reponses
         self.configs = []  # config passee a chaque send_message (None si absente)
         self.envoyes = []  # chaque message passé à send_message
 
@@ -195,14 +199,18 @@ class _Chat:
 
 class _Chats:
     def __init__(self):
-        self.reponses = []  # file des réponses du prochain chat
+        self.reponses = []  # file unique des réponses du modèle
         self.creation = None  # dernier appel create(model=, history=, config=)
+        self.appels = []  # TOUS les chats créés, dans l'ordre (plan puis agent)
 
         self.dernier = None  # dernier chat créé (pour inspecter les envois)
+        self.chats_crees = []  # tous les chats créés, dans l'ordre (plan puis agent)
 
     def create(self, model, history, config):
         self.creation = {"model": model, "history": history, "config": config}
+        self.appels.append(self.creation)
         self.dernier = _Chat(self.reponses)
+        self.chats_crees.append(self.dernier)
         return self.dernier
 
 
@@ -246,7 +254,18 @@ def supabase():
 
 
 @pytest.fixture
-def ia():
+def ia(monkeypatch):
+    """Client simulé, réflexion ramenée à son plus simple comportement.
+
+    Le plan et l'auto-critique sont deux appels de modèle de plus, activés en
+    production : ils sont coupés ici pour que chaque test reste exactement sur le
+    nombre de réponses qu'il a lui-même programmées. Les tests qui les exercent
+    les réactivent explicitement via monkeypatch sur `modules.ai_engine`.
+    """
+    import modules.ai_engine as engine
+
+    monkeypatch.setattr(engine, "AGENT_PLAN_ACTIVEE", False)
+    monkeypatch.setattr(engine, "AGENT_CRITIQUE_ACTIVEE", False)
     return FakeIA()
 
 

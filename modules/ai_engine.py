@@ -1,14 +1,23 @@
 import datetime
+import json
 import logging
 
 from google import genai
 from google.genai import types
 
 from modules.config import (
+    AGENT_CRITIQUE_ACTIVEE,
+    AGENT_PLAN_ACTIVEE,
     CHAT_MODEL,
     EMBEDDING_MODEL,
     MAX_ITERATIONS,
-    OBSERVATIONS_MAX_CHARS,
+    STAGNATION_MAX_APPELS_IDENTIQUES,
+)
+from modules.reflexion import (
+    construire_plan,
+    evaluer_brouillon,
+    formater_observations,
+    merite_un_plan,
 )
 from modules.tools import calculatrice, meteo, recherche_web
 
@@ -30,28 +39,37 @@ CONFIG_SANS_OUTILS = types.GenerateContentConfig(
 )
 
 
-def _formater_observations(observations):
+# Réponse de dernier recours quand la synthèse forcée échoue elle-même :
+# l'utilisateur doit toujours recevoir quelque chose.
+REPLI_SYNTHESE = (
+    "Je n'ai pas pu finaliser l'ensemble des étapes de recherche "
+    "dans la limite impartie, mais voici ce qui a pu être identifié."
+)
+
+
+def _statut_outil(nom, arguments):
+    """Message d'étape affiché dans l'interface, propre à chaque outil."""
+    if nom == "recherche_web":
+        return f"🌍 Recherche sur le web : `{arguments.get('requete', '')}`"
+    if nom == "meteo":
+        return f"🌦️ Consultation de la météo pour `{arguments.get('ville', '')}`"
+    if nom == "calculatrice":
+        return f"🧮 Calcul en cours : `{arguments.get('expression', '')}`"
+    return f"🛠️ Utilisation de l'outil : `{nom}`"
+
+
+def _cle_appel(nom, arguments):
+    """Clé stable d'un appel d'outil : mêmes nom et arguments, même appel.
+
+    Les arguments viennent du modèle sous forme de mapping : l'ordre des clés est
+    ignoré (tri) et toute valeur non sérialisable est repliée en texte, pour que
+    deux appels identiques produisent toujours la même clé.
     """
-    Résume les observations des outils pour le message de synthèse forcée.
-
-    Les observations les plus récentes sont conservées en priorité : le rappel
-    est tronqué à OBSERVATIONS_MAX_CHARS pour garder la main sur la taille du
-    prompt, et la troncature est signalée au modèle.
-    """
-    if not observations:
-        return ""
-
-    blocs = []
-    total = 0
-    for observation in reversed(observations):
-        if total + len(observation) > OBSERVATIONS_MAX_CHARS:
-            blocs.append("(... observations plus anciennes tronquées ...)")
-            break
-        blocs.append(observation)
-        total += len(observation)
-
-    blocs.reverse()
-    return "\n".join(blocs)
+    try:
+        args = json.dumps(dict(arguments or {}), sort_keys=True, ensure_ascii=False)
+    except TypeError:
+        args = repr(arguments)
+    return f"{nom} {args}"
 
 
 def init_ai_client(api_key):
@@ -86,6 +104,69 @@ def get_ai_response(client, gemini_history, status_callback=None):
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
     )
 
+    def notifier(message):
+        """Fait défiler une étape dans la zone de statut de l'interface."""
+        if status_callback:
+            status_callback(message)
+
+    def synthese_forcee(motif):
+        """Contraint le modèle à conclure, outils coupés, avec le rappel des faits.
+
+        Deux chemins mènent ici : les itérations épuisées sans conclusion, ou
+        l'agent répété à l'identique (stagnation). Renvoie None si aucun texte
+        n'obtient, à l'appelant de choisir le message de repli.
+        """
+        logger.warning("%s : forçage de synthèse finale.", motif)
+        notifier(
+            "⚠️ Limite de recherche atteinte : rédaction d'une synthèse avec les éléments disponibles..."
+        )
+
+        message = (
+            "N'appelle plus aucun outil. Rédige immédiatement une synthèse claire "
+            "et directe répondant au mieux à la question initiale de l'utilisateur "
+            "à partir des éléments collectés jusqu'ici, en précisant les "
+            "éventuelles incertitudes ou données manquantes."
+        )
+        rappel = formater_observations(observations)
+        if rappel:
+            message += "\n\nObservations déjà collectées auprès des outils :\n" + rappel
+        if plan:
+            message += f"\n\nPlan initial à couvrir :\n{plan}"
+
+        try:
+            texte = (
+                chat_session.send_message(message, config=CONFIG_SANS_OUTILS).text or ""
+            ).strip()
+        except Exception as err_synthese:
+            logger.error("Échec de la synthèse forcée : %s", err_synthese)
+            return None
+        if not texte:
+            return None
+        return (
+            f"{texte}\n\n"
+            "*(Note : Cette réponse est une synthèse établie après avoir atteint la limite de recherche.)*"
+        )
+
+    # Plan d'attaque : une étape de stratégie avant d'agir. Elle coûte un appel,
+    # donc seulement pour les questions longues ou à plusieurs voix (jamais pour
+    # un « bonjour »). Le chat dédié, historique vide et outils coupés, évite de
+    # polluer la session de l'agent avec un aller-retour purement préparatoire.
+    question_initiale = latest_user_message
+    plan = None
+    if AGENT_PLAN_ACTIVEE and merite_un_plan(question_initiale):
+        notifier("🗺️ Préparation d'un plan de recherche...")
+        chat_plan = client.chats.create(
+            model=CHAT_MODEL, history=[], config=CONFIG_SANS_OUTILS
+        )
+        plan = construire_plan(
+            question_initiale, lambda invite: chat_plan.send_message(invite).text
+        )
+        if plan:
+            notifier(f"🗺️ Plan retenu :\n{plan}")
+            latest_user_message = (
+                f"[Plan à suivre]\n{plan}\n\nQuestion : {question_initiale}"
+            )
+
     logger.info("Démarrage d'une nouvelle session Agent ReAct.")
     chat_session = client.chats.create(
         model=CHAT_MODEL, history=history_for_session, config=config
@@ -94,100 +175,88 @@ def get_ai_response(client, gemini_history, status_callback=None):
     current_message = latest_user_message
     max_iterations = MAX_ITERATIONS
     observations = []  # résultats déjà obtenus des outils, réutilisés en synthèse
+    # Résultats déjà obtenus et nombre de fois que le même appel a été demandé :
+    # un modèle qui répète mot pour mot sa requête ne doit pas repayer le réseau.
+    resultats_par_appel = {}
+    repetitions = {}
+    critique_faite = False  # une seule auto-critique par question
 
     for iteration in range(max_iterations):
         logger.info(f"ReAct Loop - Itération {iteration + 1}")
 
-        # 💡 Mise à jour de l'interface
-        if status_callback:
-            status_callback(f"🔄 Analyse et réflexion (Étape {iteration + 1})...")
+        notifier(f"🔄 Analyse et réflexion (Étape {iteration + 1})...")
 
         response = chat_session.send_message(current_message)
 
         if response.function_calls:
-            # Si on atteint la dernière itération autorisée, on force l'agent à synthétiser
-            # au lieu de relancer des outils indéfiniment
+            # Dernière itération autorisée : on force l'agent à synthétiser au
+            # lieu de relancer des outils indéfiniment.
             if iteration == max_iterations - 1:
-                logger.warning(
-                    "Limite d'itérations atteinte (%d) : forçage de synthèse finale.",
-                    max_iterations,
+                synthese = synthese_forcee(
+                    f"Limite d'itérations atteinte ({max_iterations})"
                 )
-                if status_callback:
-                    status_callback(
-                        "⚠️ Limite de recherche atteinte : rédaction d'une synthèse avec les éléments disponibles..."
-                    )
-
-                message_forcage = (
-                    "Limite d'itérations atteinte. N'appelle plus aucun outil. "
-                    "Rédige immédiatement une synthèse claire et directe répondant au mieux "
-                    "à la question initiale de l'utilisateur à partir des éléments collectés jusqu'ici, "
-                    "en précisant les éventuelles incertitudes ou données manquantes."
-                )
-                rappel = _formater_observations(observations)
-                if rappel:
-                    message_forcage += (
-                        "\n\nObservations déjà collectées auprès des outils :\n"
-                        + rappel
-                    )
-                try:
-                    reponse_synthese = chat_session.send_message(
-                        message_forcage, config=CONFIG_SANS_OUTILS
-                    )
-                    if reponse_synthese.text:
-                        return (
-                            f"{reponse_synthese.text}\n\n"
-                            "*(Note : Cette réponse est une synthèse établie après avoir atteint la limite de recherche.)*"
-                        )
-                except Exception as err_synthese:
-                    logger.error("Échec de la synthèse forcée : %s", err_synthese)
-
-                return (
-                    "Je n'ai pas pu finaliser l'ensemble des étapes de recherche "
-                    "dans la limite impartie, mais voici ce qui a pu être identifié."
-                )
+                return synthese or REPLI_SYNTHESE
 
             tool_responses = []
+            stagnation = False
             for function_call in response.function_calls:
                 tool_name = function_call.name
-                tool_args = function_call.args
+                tool_args = function_call.args or {}
+                cle = _cle_appel(tool_name, tool_args)
+                repetitions[cle] = repetitions.get(cle, 0) + 1
 
                 # 💡 Des messages personnalisés pour l'UI selon l'outil !
-                if status_callback:
-                    if tool_name == "recherche_web":
-                        status_callback(
-                            f"🌍 Recherche sur le web : `{tool_args.get('requete', '')}`"
-                        )
-                    elif tool_name == "meteo":
-                        status_callback(
-                            f"🌦️ Consultation de la météo pour `{tool_args.get('ville', '')}`"
-                        )
-                    elif tool_name == "calculatrice":
-                        status_callback(
-                            f"🧮 Calcul en cours : `{tool_args.get('expression', '')}`"
-                        )
-                    else:
-                        status_callback(f"🛠️ Utilisation de l'outil : `{tool_name}`")
-
+                notifier(_statut_outil(tool_name, tool_args))
                 logger.info(
                     f"🛠️  L'Agent décide d'utiliser : {tool_name} avec les arguments : {tool_args}"
                 )
 
+                if cle in resultats_par_appel:
+                    # Même outil, mêmes arguments, résultat déjà en main : aucune
+                    # nouvelle requête réseau. Le modèle retrouve le résultat,
+                    # plus une pichenette pour qu'il change d'angle au lieu de
+                    # tourner en rond jusqu'à la fin du budget.
+                    resultat = resultats_par_appel[cle]
+                    stagnation = stagnation or (
+                        repetitions[cle] > STAGNATION_MAX_APPELS_IDENTIQUES
+                    )
+                    observations.append(f"{tool_name} → (déjà appelé) {resultat}")
+                    notifier("♻️ Résultat déjà obtenu : nouvelle requête évitée.")
+                    tool_responses.append(
+                        types.Part.from_function_response(
+                            name=tool_name,
+                            response={
+                                "result": resultat,
+                                "avertissement": (
+                                    "Cet appel a déjà été effectué avec exactement "
+                                    "ces arguments. Change d'approche ou rédige ta "
+                                    "réponse."
+                                ),
+                            },
+                        )
+                    )
+                    continue
+
                 if tool_name in AVAILABLE_TOOLS:
                     try:
                         tool_result = AVAILABLE_TOOLS[tool_name](**tool_args)
-                        observations.append(f"{tool_name} → {tool_result}")
-                        tool_responses.append(
-                            types.Part.from_function_response(
-                                name=tool_name, response={"result": str(tool_result)}
-                            )
-                        )
                     except Exception as e:
+                        # Échec volontairement non mis en cache : une panne réseau
+                        # mérite d'être retentée au tour suivant.
                         observations.append(f"{tool_name} → erreur : {e}")
                         tool_responses.append(
                             types.Part.from_function_response(
                                 name=tool_name, response={"error": str(e)}
                             )
                         )
+                        continue
+                    observations.append(f"{tool_name} → {tool_result}")
+                    resultats_par_appel[cle] = str(tool_result)
+                    tool_responses.append(
+                        types.Part.from_function_response(
+                            name=tool_name, response={"result": str(tool_result)}
+                        )
+                    )
                 else:
                     observations.append(f"{tool_name} → outil inconnu")
                     tool_responses.append(
@@ -195,15 +264,47 @@ def get_ai_response(client, gemini_history, status_callback=None):
                             name=tool_name, response={"error": "Tool not found"}
                         )
                     )
+
+            if stagnation:
+                # L'agent répète le même appel sans avancer : plutôt que d'épuiser
+                # le budget en requêtes inutiles, il conclut avec ce qu'il sait.
+                synthese = synthese_forcee("Agent bloqué sur un appel déjà exécuté")
+                return synthese or REPLI_SYNTHESE
+
             current_message = tool_responses
         else:
             if response.text:
-                if status_callback:
-                    status_callback("💬 Rédaction de la réponse finale...")
+                brouillon = response.text
+                # Auto-critique : une réponse obtenue grâce aux outils est relue
+                # avant envoi, une seule fois par question et outils coupés. Sa
+                # panne ne retient jamais la réponse (fail-open) : elle ne peut
+                # que demander une reprise, jamais bloquer une conversation.
+                if AGENT_CRITIQUE_ACTIVEE and observations and not critique_faite:
+                    critique_faite = True
+                    notifier("🧪 Vérification de la réponse avant envoi...")
+                    valide, raison = evaluer_brouillon(
+                        question_initiale,
+                        observations,
+                        brouillon,
+                        lambda invite: (
+                            chat_session.send_message(
+                                invite, config=CONFIG_SANS_OUTILS
+                            ).text
+                        ),
+                    )
+                    if not valide:
+                        notifier(f"🧪 Réponse jugée insuffisante : {raison}")
+                        current_message = (
+                            f"Auto-critique : {raison}. Reprends le raisonnement et "
+                            "corrige la réponse en t'appuyant sur les observations "
+                            "déjà obtenues, en appelant l'outil qui manque au besoin."
+                        )
+                        continue
+                notifier("💬 Rédaction de la réponse finale...")
                 logger.info(
                     "L'Agent a terminé son raisonnement et fournit une réponse."
                 )
-                return response.text
+                return brouillon
 
             # Réponse sans texte ni appel d'outil : on relance le modèle au lieu
             # de renvoyer None à l'interface.

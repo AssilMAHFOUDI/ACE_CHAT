@@ -17,6 +17,7 @@ from typing import Any
 from modules.ai_engine import CONFIG_SANS_OUTILS
 from modules.config import (
     CHAT_MODEL,
+    MEMORY_MIN_OVERFLOW,
     MEMORY_SUMMARY_MAX_CHARS,
     MEMORY_WINDOW_SIZE,
 )
@@ -140,6 +141,13 @@ def compresser_historique(
     limite = max(total - MEMORY_WINDOW_SIZE, deja_resume)
     if limite <= deja_resume:
         # Rien de nouveau ne sort de la fenêtre : le résumé suffit, aucun appel.
+        return _vue_modele(resume, historique[deja_resume:]), resume, deja_resume
+
+    # Le premier débordement est toujours résumé. Ensuite, on attend que assez de
+    # messages aient débordé pour justifier un appel : sans ce seuil, chaque tour
+    # de conversation paierait une synthèse pour 1 ou 2 messages ajoutés. La vue
+    # est alors rendue un peu plus longue que la fenêtre, jamais plus courte.
+    if deja_resume > 0 and limite - deja_resume < MEMORY_MIN_OVERFLOW:
         return _vue_modele(resume, historique[deja_resume:]), resume, deja_resume
 
     limite = _aligner(historique, limite, ROLES_MODELE)

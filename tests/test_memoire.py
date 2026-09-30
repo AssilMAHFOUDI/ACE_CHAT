@@ -61,7 +61,9 @@ def test_seuls_les_messages_debordants_sont_envoyes_a_la_synthese(ia):
 
 
 def test_le_resume_deja_etabli_est_reinjecte_dans_la_demande(ia):
-    historique = conversation(12)
+    # 14 messages : 4 deja resumes, 8 debordent depuis la fenetre de 6. Le
+    # regroupement (MEMORY_MIN_OVERFLOW = 4) est ainsi atteint et l'appel a lieu.
+    historique = conversation(14)
     ia.chats.reponses = [reponse_finale("RESUME A JOUR")]
     vue, resume, index = compresser_historique(
         historique, ia, resume="ANCIEN RESUME", deja_resume=4
@@ -73,8 +75,8 @@ def test_le_resume_deja_etabli_est_reinjecte_dans_la_demande(ia):
     assert "Utilisateur : message 4" in invite
     assert "message 0" not in invite
     assert resume == "RESUME A JOUR"
-    assert index == 7
-    assert vue[1:] == historique[7:]
+    assert index == 9
+    assert vue[1:] == historique[9:]
 
 
 def test_aucun_appel_quand_rien_ne_deborde_depuis_le_dernier_resume(ia):
@@ -127,7 +129,9 @@ def test_reponse_vide_du_modele_est_traitee_comme_un_echec(ia):
 
 
 def test_quand_le_resume_echoue_le_resume_deja_etabli_est_quand_meme_injecte(ia):
-    historique = conversation(12)
+    # 14 messages : le seuil de regroupement est atteint, la synthèse est tentée
+    # (et échoue), l'index n'avance pas et le résumé acquis reste injecté.
+    historique = conversation(14)
     ia.chats.reponses = []
     vue, resume, index = compresser_historique(
         historique, ia, resume="ANCIEN RESUME", deja_resume=4
@@ -135,7 +139,7 @@ def test_quand_le_resume_echoue_le_resume_deja_etabli_est_quand_meme_injecte(ia)
     assert resume == "ANCIEN RESUME"
     assert index == 4
     assert vue[0]["content"] == f"{EN_TETE_RESUME}\nANCIEN RESUME"
-    assert vue[1:] == historique[7:]
+    assert vue[1:] == historique[9:]
 
 
 def test_le_resume_est_tronque_a_la_longueur_maximale(ia):
@@ -175,3 +179,33 @@ def test_l_historique_d_origine_n_est_jamais_modifie(ia):
     compresser_historique(historique, ia)
     # Vue compressée : l'historique affiché et persisté reste intact.
     assert historique == avant
+
+
+# --- Regroupement des synthèses (MEMORY_MIN_OVERFLOW) -----------------------
+
+
+def test_les_syntheses_sont_regroupees_tant_que_le_seuil_n_est_atteint(ia):
+    # Fenêtre de 6, résumé couvrant les 4 premiers, 12 messages au total : seuls
+    # 2 messages débordent depuis le dernier résumé. Le seuil de 4 n'est pas
+    # atteint : aucun appel, la vue garde simplement une fenêtre un peu plus
+    # longue, qui sera compressée au tour suivant.
+    historique = conversation(12)
+    vue, resume, index = compresser_historique(
+        historique, ia, resume="ACQUIS", deja_resume=4
+    )
+    assert ia.chats.creation is None
+    assert resume == "ACQUIS"
+    assert index == 4
+    assert vue[0]["content"] == f"{EN_TETE_RESUME}\nACQUIS"
+    assert vue[1:] == historique[4:]
+
+
+def test_le_premier_debordement_est_resume_sans_attendre_le_seuil(ia):
+    # Le regroupement ne vaut que pour les synthèses suivantes : dès qu'un
+    # message sort de la fenêtre alors qu'aucun résumé n'existe encore, il est
+    # synthétisé (ici 2 messages, sous le seuil de 4).
+    historique = conversation(8)
+    ia.chats.reponses = [reponse_finale("LE RESUME")]
+    _, resume, index = compresser_historique(historique, ia)
+    assert resume == "LE RESUME"
+    assert index == 3
